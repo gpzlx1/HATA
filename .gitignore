@@ -1,0 +1,8 @@
+build
+.vscode
+*.egg*
+__pycache__
+.hypothesis
+*.so
+*.log
+*.pt
