@@ -54,8 +54,8 @@ def customer_attention_forward(
                                      self.head_dim)
 
     if q_len > 1:
-        qo_indptr = torch.arange(0,
-                                 bsz + 1,
+        qo_indptr = torch.arange(0, (bsz + 1) * q_len,
+                                 q_len,
                                  device=query_states.device,
                                  dtype=torch.int32)
         self.prefill_wrapper.plan(
