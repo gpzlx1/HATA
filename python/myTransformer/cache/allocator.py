@@ -9,7 +9,6 @@ class PageAllocator():
         self.device = device
         self.req2page = {}
         self.req2last_len = {}
-        self.req2last_page = {}
 
         # temporary
         self.next_page_id = 0

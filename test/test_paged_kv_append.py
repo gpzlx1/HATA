@@ -1,14 +1,14 @@
 import torch
-from myTransformer.cache import prepare_cache_for_generation
+import myTransformer
+from transformers import LlamaForCausalLM, AutoTokenizer, AutoConfig
 from transformers.generation.configuration_utils import GenerationConfig
 
 if __name__ == "__main__":
-    import transformers
-    from transformers import LlamaForCausalLM, AutoTokenizer, AutoConfig
+
     # i = int(sys.argv[1])
     device = "cuda:0"
 
-    transformers.generation.utils.GenerationMixin._prepare_cache_for_generation = prepare_cache_for_generation
+    myTransformer.models.llama.enable()
 
     model_path = "/nfs/shared_LLM_model/lmsys/longchat-7b-v1.5-32k"
     tokenizer = AutoTokenizer.from_pretrained(model_path)
@@ -40,7 +40,9 @@ if __name__ == "__main__":
                    max_new_tokens=1,
                    min_new_tokens=1,
                    generation_config=generation_config)
+
     kvcache = model._cache
+    kvcache.reset(batch_size)
 
     key_states = torch.randn((batch_size, 1024, 32, 128),
                              dtype=torch.float16,
@@ -49,7 +51,6 @@ if __name__ == "__main__":
                                dtype=torch.float16,
                                device=device)
     kvcache.update(key_states, value_states, 0)
-    print(kvcache.layer_allocators[0].req2page)
     print(kvcache.layer_allocators[0].get_metadata([0, 1]))
 
     key_states = torch.randn((batch_size, 1, 32, 128),
@@ -62,10 +63,7 @@ if __name__ == "__main__":
     print(kvcache.layer_allocators[0].get_metadata([0, 1]))
 
     print("Reset")
-    model.generate(prompt,
-                   max_new_tokens=1,
-                   min_new_tokens=1,
-                   generation_config=generation_config)
+    kvcache.reset(batch_size)
 
     print(kvcache.layer_allocators[0].req2page)
 

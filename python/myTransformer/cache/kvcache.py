@@ -99,7 +99,7 @@ class PagedCache(Cache):
 
         self.seq_len += seq_len
 
-        return self.layer_caches[layer_idx]
+        return self.layer_caches[layer_idx], indptr, indices, last_lens
 
     def reset(self, batch_size):
         # reset metadata for flashinfer's page management
@@ -107,6 +107,12 @@ class PagedCache(Cache):
         self.seq_len = 0
         for l in range(self.num_layers):
             self.layer_allocators[l].reset()
+
+    def get_page_size(self):
+        return self.page_size
+
+    def get_page_num(self):
+        return self.page_num
 
 
 """
@@ -164,3 +170,6 @@ def prepare_cache_for_generation(
             dtype=self.dtype,
             layer_device_map=layer_device_map,
         )
+
+    cache_name = "past_key_values"
+    model_kwargs[cache_name] = self._cache

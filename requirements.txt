@@ -1,6 +1,8 @@
 torch==2.4.0
 transformers==4.45.2
 accelerate
+datasets
 pybind11
 protobuf
 sentencepiece
+fastchat
