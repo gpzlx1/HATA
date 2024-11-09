@@ -34,7 +34,6 @@ class PagedCache(Cache):
                                     config.num_key_value_heads)
         self.layer_devices = []
         self.layer_caches = []
-        self.layer_allocators = []
         self.curr_batch_size = 0
         self.seq_len = 0
 
@@ -49,8 +48,9 @@ class PagedCache(Cache):
                              self.head_dim),
                             dtype=self.dtype,
                             device=layer_device))
-            self.layer_allocators.append(
-                PageAllocator(self.page_num, self.page_size, layer_device))
+
+        self.allocator = PageAllocator(self.page_num, self.page_size,
+                                       self.layer_devices[0])
 
     def get_seq_length(self, layer_idx: Optional[int] = 0) -> int:
         return self.seq_len
@@ -68,12 +68,10 @@ class PagedCache(Cache):
                layer_idx: int,
                cache_kwargs: Optional[Dict[str, Any]] = None):
         """
-        flashinfer's page kvcache is designed for variable-length sequences
-        however, hf assumes fixed-length sequences
-        currently, we only support fixed-length sequences
-        so we return the sequence length of the first batch
+        flashinfer's page kvcache is designed for variable-length sequences batch
+        however, hf assumes fixed-length sequences batch
+        currently, we only support fixed-length sequences batch
         """
-
         bsz, seq_len, num_heads, head_dim = key_states.shape
         key_states = key_states.view(bsz * seq_len, num_heads, head_dim)
         value_states = value_states.view(bsz * seq_len, num_heads, head_dim)
@@ -82,31 +80,33 @@ class PagedCache(Cache):
                                      dtype=torch.int32,
                                      device=self.layer_devices[layer_idx])
 
-        id_list = []
-        for i in range(bsz):
-            self.layer_allocators[layer_idx].alloc(i, seq_len)
-            id_list.append(i)
-        indptr, indices, last_lens = self.layer_allocators[
-            layer_idx].get_metadata(id_list)
+        id_list = [i for i in range(bsz)]
+        indptr, indices, last_lens = self.allocator.get_metadata(id_list)
         page.append_paged_kv_cache(key_states,
                                    value_states,
                                    append_indptr,
                                    self.layer_caches[layer_idx],
-                                   indices,
-                                   indptr,
-                                   last_lens,
+                                   indices.to(self.layer_devices[layer_idx]),
+                                   indptr.to(self.layer_devices[layer_idx]),
+                                   last_lens.to(self.layer_devices[layer_idx]),
                                    kv_layout="NHD")
 
         self.seq_len += seq_len
 
-        return self.layer_caches[layer_idx], indptr, indices, last_lens
+        return self.layer_caches[layer_idx]
+
+    def alloc(self, batch_size, seq_len):
+        for i in range(batch_size):
+            self.allocator.alloc(i, seq_len)
+        id_list = [i for i in range(batch_size)]
+        indptr, indices, last_lens = self.allocator.get_metadata(id_list)
+        return indptr, indices, last_lens
 
     def reset(self, batch_size):
         # reset metadata for flashinfer's page management
         self.curr_batch_size = batch_size
         self.seq_len = 0
-        for l in range(self.num_layers):
-            self.layer_allocators[l].reset()
+        self.allocator.reset()
 
     def get_page_size(self):
         return self.page_size

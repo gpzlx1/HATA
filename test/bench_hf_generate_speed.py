@@ -18,7 +18,7 @@ def bench_prefill_decode_speed(model, tokenizer, prefill_len, batch_size):
     input_text = "A " * prefill_len
 
     generation_kwargs = {
-        "page_num": 2000,
+        "page_num": 3000,
         "page_size": 16,
     }
     generation_config = GenerationConfig(**generation_kwargs)
@@ -78,7 +78,6 @@ def bench_prefill_decode_speed(model, tokenizer, prefill_len, batch_size):
 
 
 if __name__ == "__main__":
-    # i = int(sys.argv[1])
     device = "cuda:0"
 
     # model_path = "/nfs/shared_LLM_model/meta-llama/Llama-2-7b-chat-hf"
@@ -100,7 +99,7 @@ if __name__ == "__main__":
     model.generation_config.cache_implementation = "static"
     model = model.eval().to(device)
 
-    batch_size = 2
+    batch_size = 1
     print(f"batch_size: {batch_size}")
     for prefill_len in [1000, 2000, 4000, 8000, 16000, 32000]:
         bench_prefill_decode_speed(model, tokenizer, prefill_len, batch_size)
