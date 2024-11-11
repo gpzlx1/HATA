@@ -20,6 +20,7 @@ def bench_prefill_decode_speed(model, tokenizer, prefill_len, batch_size):
     generation_kwargs = {
         "page_num": 3000,
         "page_size": 16,
+        "max_gpu_cache_memory": 32212254720, # 30GB
     }
     generation_config = GenerationConfig(**generation_kwargs)
 
@@ -78,7 +79,8 @@ def bench_prefill_decode_speed(model, tokenizer, prefill_len, batch_size):
 
 
 if __name__ == "__main__":
-    device = "cuda:0"
+    device = "cuda:5"
+    torch.cuda.set_device(device)
 
     # model_path = "/nfs/shared_LLM_model/meta-llama/Llama-2-7b-chat-hf"
     model_path = "/nfs/shared_LLM_model/lmsys/longchat-7b-v1.5-32k"
@@ -90,16 +92,14 @@ if __name__ == "__main__":
     config._attn_implementation = "sdpa"
 
     print(config)
-
-    myTransformer.models.llama.enable()
-
-    model = LlamaForCausalLM.from_pretrained(model_path,
+    from myTransformer.models.modeling_llama_fa import CustomLlamaForCausalLM
+    model = CustomLlamaForCausalLM.from_pretrained(model_path,
                                              torch_dtype=torch.float16,
                                              config=config)
     model.generation_config.cache_implementation = "static"
     model = model.eval().to(device)
 
-    batch_size = 1
+    batch_size = 2
     print(f"batch_size: {batch_size}")
     for prefill_len in [1000, 2000, 4000, 8000, 16000, 32000]:
         bench_prefill_decode_speed(model, tokenizer, prefill_len, batch_size)

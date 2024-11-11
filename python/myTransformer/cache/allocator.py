@@ -14,6 +14,7 @@ class PageAllocator():
         self.next_page_id = 0
 
     def alloc(self, req_id, req_len):
+        # todo: optimize
         if req_id in self.req2last_len:
             last_page_len = self.req2last_len[req_id]
             req_len -= self.page_size - last_page_len
@@ -49,6 +50,7 @@ class PageAllocator():
         self.next_page_id += need_page_num
 
     def get_metadata(self, req_ids):
+        # todo: optimize
         indptr = [0]
         indices = []
         last_lens = []

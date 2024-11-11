@@ -1,5 +1,7 @@
 import torch
+import torch.nn as nn
 import flashinfer
+from flashinfer.activation import silu_and_mul
 
 
 def register_flashinfer_attention(attn, device):
@@ -15,3 +17,12 @@ def register_flashinfer_attention(attn, device):
         prefill_workspace, "NHD")
     attn.decode_wrapper = flashinfer.BatchDecodeWithPagedKVCacheWrapper(
         decode_workspace, "NHD")
+
+
+class SiLUAndMul(nn.Module):
+
+    def __init__(self):
+        super(SiLUAndMul, self).__init__()
+
+    def forward(self, x):
+        return silu_and_mul(x)

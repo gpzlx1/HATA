@@ -72,26 +72,21 @@ class PagedCache(Cache):
         however, hf assumes fixed-length sequences batch
         currently, we only support fixed-length sequences batch
         """
-        bsz, seq_len, num_heads, head_dim = key_states.shape
-        key_states = key_states.view(bsz * seq_len, num_heads, head_dim)
-        value_states = value_states.view(bsz * seq_len, num_heads, head_dim)
-        append_indptr = torch.arange(0, (bsz + 1) * seq_len,
-                                     seq_len,
-                                     dtype=torch.int32,
-                                     device=self.layer_devices[layer_idx])
 
-        id_list = [i for i in range(bsz)]
-        indptr, indices, last_lens = self.allocator.get_metadata(id_list)
-        page.append_paged_kv_cache(key_states,
-                                   value_states,
-                                   append_indptr,
-                                   self.layer_caches[layer_idx],
-                                   indices.to(self.layer_devices[layer_idx]),
-                                   indptr.to(self.layer_devices[layer_idx]),
-                                   last_lens.to(self.layer_devices[layer_idx]),
-                                   kv_layout="NHD")
+        append_indptr = self.get_append_indptr()
+        kv_indptr, kv_indices, kv_last_lens = self.get_attn_metadata()
+        page.append_paged_kv_cache(
+            key_states,
+            value_states,
+            append_indptr,
+            self.layer_caches[layer_idx],
+            kv_indices.to(self.layer_devices[layer_idx]),
+            kv_indptr.to(self.layer_devices[layer_idx]),
+            kv_last_lens.to(self.layer_devices[layer_idx]),
+            kv_layout="NHD")
 
-        self.seq_len += seq_len
+        if layer_idx == len(self.layer_caches) - 1:
+            self.seq_len += self.get_cur_q_len()
 
         return self.layer_caches[layer_idx]
 
@@ -100,7 +95,38 @@ class PagedCache(Cache):
             self.allocator.alloc(i, seq_len)
         id_list = [i for i in range(batch_size)]
         indptr, indices, last_lens = self.allocator.get_metadata(id_list)
-        return indptr, indices, last_lens
+        self._kv_indptr = indptr
+        self._kv_indices = indices
+        self._kv_last_lens = last_lens
+        self._rope_indptr = torch.tensor(
+            [i * seq_len for i in range(batch_size + 1)],
+            dtype=torch.int32,
+            device=self.allocator.device)
+        self._rope_offsets = torch.full((batch_size, ),
+                                        self.seq_len,
+                                        dtype=torch.int32,
+                                        device=self.allocator.device)
+        self._cur_batch_size = batch_size
+        self._cur_q_len = seq_len
+        self._append_indptr = torch.arange(0, (batch_size + 1) * seq_len,
+                                           seq_len,
+                                           dtype=torch.int32,
+                                           device=self.allocator.device)
+
+    def get_rope_metadata(self):
+        return self._rope_indptr, self._rope_offsets
+
+    def get_attn_metadata(self):
+        return self._kv_indptr, self._kv_indices, self._kv_last_lens
+
+    def get_cur_batch_size(self):
+        return self._cur_batch_size
+
+    def get_cur_q_len(self):
+        return self._cur_q_len
+
+    def get_append_indptr(self):
+        return self._append_indptr
 
     def reset(self, batch_size):
         # reset metadata for flashinfer's page management
