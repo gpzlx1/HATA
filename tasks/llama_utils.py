@@ -54,6 +54,7 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
         generate_config = {
             "max_gpu_cache_memory": 25 * 1024 * 1024 * 1024,  # 30GB
         }
+        model_config._attn_implementation = "flash_attention_2"
         from myTransformer.models.modeling_llama_fa import CustomLlamaForCausalLM
         model = CustomLlamaForCausalLM.from_pretrained(model_name_or_path,
                                                        config=model_config)

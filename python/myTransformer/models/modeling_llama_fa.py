@@ -7,7 +7,7 @@ from transformers.models.llama.modeling_llama import (
     LlamaMLP,
     LlamaRMSNorm,
     LlamaDecoderLayer,
-    LlamaSdpaAttention,
+    LlamaFlashAttention2,
 )
 from transformers.utils import logging
 from typing import Optional, Tuple, Union
@@ -16,7 +16,7 @@ from transformers.modeling_outputs import BaseModelOutputWithPast
 from ..cache.kvcache_fa import CustomStaticCache, prepare_cache_for_generation
 from .utils import SiLUAndMul
 import flashinfer
-import flash_attn
+from transformers.modeling_flash_attention_utils import _flash_attention_forward
 
 logger = logging.get_logger(__name__)
 
@@ -102,7 +102,7 @@ class CustomLlamaRotaryEmbedding(nn.Module):
         return fl_q, fl_k
 
 
-class CustomLlamaAttention(LlamaSdpaAttention):
+class CustomLlamaAttention(LlamaFlashAttention2):
 
     def __init__(self, config, layer_idx):
         super().__init__(config, layer_idx)
@@ -145,10 +145,19 @@ class CustomLlamaAttention(LlamaSdpaAttention):
         query_states = query_states.view(batch_size, -1, self.num_heads,
                                          self.head_dim)
 
-        attn_output = flash_attn.flash_attn_func(query_states,
-                                                 key_states,
-                                                 value_states,
-                                                 causal=True)
+        q_len = past_key_value.get_cur_q_len()
+        attn_output = _flash_attention_forward(
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
+            q_len,
+            position_ids=position_ids,
+            dropout=0,
+            sliding_window=getattr(self, "sliding_window", None),
+            use_top_left_mask=self._flash_attn_uses_top_left_mask,
+            is_causal=self.is_causal,
+        )
         attn_output = attn_output.view(-1, hidden_size)
         attn_output = self.o_proj(attn_output)
 
