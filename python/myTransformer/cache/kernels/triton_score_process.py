@@ -16,7 +16,9 @@ def _score_process(
     data_ptr,
     norm_ptr,
     out_ptr,
-    BSZ: tl.constexpr,
+    data_b_stride,
+    norm_b_stride,
+    out_b_stride,
     SEQ_LEN: tl.constexpr,
     NUM_HEAD: tl.constexpr,
     NUM_K_HEAD: tl.constexpr,
@@ -28,32 +30,31 @@ def _score_process(
     start_n = tl.program_id(1) * BLOCK_N
     start_k = tl.program_id(2)
     start_k_gqa = start_k // GQA_SIZE
-    BSZ_SEQ = BSZ * SEQ_LEN
-    BSZ_HEAD = BSZ * NUM_HEAD
-    src_offset = start_m * SEQ_LEN + start_n
-    dst_offset = start_m * NUM_HEAD + start_k
+    data_offset = start_m * data_b_stride
+    norm_offset = start_m * norm_b_stride
+    out_offset = start_m * out_b_stride
 
     Data_block_ptr = tl.make_block_ptr(
-        base=data_ptr,
-        shape=(BSZ_SEQ, NUM_HEAD),
+        base=data_ptr + data_offset,
+        shape=(SEQ_LEN, NUM_HEAD),
         strides=(NUM_HEAD, 1),
-        offsets=(src_offset, start_k),
+        offsets=(start_n, start_k),
         block_shape=(BLOCK_N, 1),
         order=(1, 0),
     )
     Norm_block_ptr = tl.make_block_ptr(
-        base=norm_ptr,
-        shape=(BSZ_SEQ, NUM_K_HEAD),
+        base=norm_ptr + norm_offset,
+        shape=(SEQ_LEN, NUM_K_HEAD),
         strides=(NUM_HEAD, 1),
-        offsets=(src_offset, start_k_gqa),
+        offsets=(start_n, start_k_gqa),
         block_shape=(BLOCK_N, 1),
         order=(1, 0),
     )
     Out_block_ptr = tl.make_block_ptr(
-        base=out_ptr,
-        shape=(BSZ_HEAD, SEQ_LEN),
+        base=out_ptr + out_offset,
+        shape=(NUM_HEAD, SEQ_LEN),
         strides=(SEQ_LEN, 1),
-        offsets=(dst_offset, start_n),
+        offsets=(start_k, start_n),
         block_shape=(1, BLOCK_N),
         order=(1, 0),
     )
@@ -75,7 +76,6 @@ def hash_score_process(hamming_dist: torch.Tensor, key_norm: torch.Tensor,
                        rbit: int):
     with torch.cuda.device(hamming_dist.device):
         assert hamming_dist.is_contiguous()
-        assert key_norm.is_contiguous()
 
         BSZ, SEQ_LEN, NUM_HEAD = hamming_dist.shape
         NUM_K_HEAD = key_norm.shape[2]
@@ -97,13 +97,16 @@ def hash_score_process(hamming_dist: torch.Tensor, key_norm: torch.Tensor,
             hamming_dist,
             key_norm,
             out,
-            BSZ,
+            hamming_dist.stride(0),
+            key_norm.stride(0),
+            out.stride(0),
             SEQ_LEN,
             NUM_HEAD,
             NUM_K_HEAD,
             GQA_SIZE,
             rbit,
             BLOCK_N=128,
+            **extra_kern_args,
         )
 
         return out
