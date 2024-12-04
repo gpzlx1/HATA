@@ -58,12 +58,12 @@ torch::Tensor TopkCUDA(torch::Tensor data, int32_t k, bool largest) {
   my_custom_resource my_mr;
 
   if (data.dtype() == torch::kFloat32) {
-    raft::matrix::detail::select::radix::select_k<float, int32_t, 11, 512>(
+    raft::matrix::detail::select::radix::select_k<float, int32_t, 8, 512>(
         data.data_ptr<float>(), static_cast<int32_t*>(nullptr), total_batch_size,
         seq_len, k, topk_values.data_ptr<float>(),
         topk_indices.data_ptr<int32_t>(), !largest, true, stream, &my_mr);
   } else {
-    raft::matrix::detail::select::radix::select_k<half, int32_t, 11, 512>(
+    raft::matrix::detail::select::radix::select_k<half, int32_t, 8, 512>(
       (half*)data.data_ptr<at::Half>(), static_cast<int32_t*>(nullptr), total_batch_size,
       seq_len, k, (half*)topk_values.data_ptr<at::Half>(),
       topk_indices.data_ptr<int32_t>(), !largest, true, stream, &my_mr);
