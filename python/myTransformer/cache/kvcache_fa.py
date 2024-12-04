@@ -57,11 +57,10 @@ class CustomStaticCache(Cache):
     def reorder_cache(self, beam_idx: torch.LongTensor):
         raise NotImplementedError
 
-    def update(self,
-               key_states: torch.Tensor,
-               value_states: torch.Tensor,
-               layer_idx: int,
-               cache_kwargs: Optional[Dict[str, Any]] = None):
+    def key_append(self,
+                   key_states: torch.Tensor,
+                   layer_idx: int,
+                   inc_seq_len=True):
 
         kv_numel = key_states.shape[0]
         q_len = kv_numel // self.curr_batch_size
@@ -70,31 +69,53 @@ class CustomStaticCache(Cache):
 
         key_states = key_states.view(self.curr_batch_size, q_len,
                                      self.num_key_value_heads, self.head_dim)
-        value_states = value_states.view(self.curr_batch_size, q_len,
-                                         self.num_key_value_heads,
-                                         self.head_dim)
-        self.layer_caches[layer_idx][:, 0, self.seq_len:self.seq_len +
+        self.layer_caches[layer_idx][0, :, self.seq_len:self.seq_len +
                                      q_len, :, :] = key_states
-        self.layer_caches[layer_idx][:, 1, self.seq_len:self.seq_len +
-                                     q_len, :] = value_states
 
-        if layer_idx == len(self.layer_caches) - 1:
+        key_states = self.layer_caches[layer_idx][0, :, :self.seq_len +
+                                                  q_len, :, :]
+
+        if inc_seq_len and layer_idx == len(self.layer_caches) - 1:
             self.seq_len += self.get_cur_q_len()
 
-        key_states = self.layer_caches[layer_idx][:, 0, :self.seq_len +
-                                                  q_len, :, :]
-        value_states = self.layer_caches[layer_idx][:, 1, :self.seq_len +
+        return key_states
+
+    def value_proj_and_append(self,
+                              hidden_states,
+                              value_weightsT,
+                              layer_idx,
+                              inc_seq_len=False):
+        hidden_size = value_weightsT.shape[0]
+        hidden_states = hidden_states.view(self.curr_batch_size, -1,
+                                           hidden_size)
+        q_len = hidden_states.shape[1]
+        self.layer_caches[layer_idx] = self.layer_caches[layer_idx].view(
+            2, self.curr_batch_size, -1, hidden_size)
+        torch.matmul(
+            hidden_states,
+            value_weightsT,
+            out=self.layer_caches[layer_idx][1, :, self.seq_len:self.seq_len +
+                                             q_len, :])
+        self.layer_caches[layer_idx] = self.layer_caches[layer_idx].view(
+            2, self.curr_batch_size, -1, self.num_key_value_heads,
+            self.head_dim)
+
+        value_states = self.layer_caches[layer_idx][1, :, :self.seq_len +
                                                     q_len, :, :]
-        
-        return key_states, value_states
+
+        if inc_seq_len and layer_idx == self.num_layers - 1:
+            self.seq_len += q_len
+
+        return value_states
 
     def reset(self, batch_size):
         self.curr_batch_size = batch_size
         self.seq_len = 0
 
         # shape for KVCache: (batch_size, 2, max_seq_len, num_heads * head_dim)
-        max_seq_len = self.each_layer_max_numel // (
-            self.num_key_value_heads * self.head_dim * self.curr_batch_size * 2)
+        max_seq_len = self.each_layer_max_numel // (self.num_key_value_heads *
+                                                    self.head_dim *
+                                                    self.curr_batch_size * 2)
         self.max_seq_len = max_seq_len
 
         numel = 2 * batch_size * max_seq_len * self.num_key_value_heads * self.head_dim
@@ -102,7 +123,7 @@ class CustomStaticCache(Cache):
         for i in range(self.num_layers):
             self.layer_caches[i] = self.max_layer_caches[i][:numel]
             self.layer_caches[i] = self.layer_caches[i].view(
-                batch_size, 2, max_seq_len, self.num_key_value_heads,
+                2, batch_size, max_seq_len, self.num_key_value_heads,
                 self.head_dim)
 
     def alloc(self, q_len):
@@ -118,9 +139,10 @@ class CustomStaticCache(Cache):
 
     def get_rope_metadata(self):
         return self._rope_indptr, self._rope_offsets
-    
+
     def get_cur_q_len(self):
         return self.cur_q_len
+
 
 """
 ===================================================
@@ -139,6 +161,7 @@ def prepare_cache_for_generation(
     device: torch.device,
 ) -> bool:
     if not hasattr(self, "_cache"):
+
         def get_layer_device_map(execution_device_map: Optional[dict] = None):
             if execution_device_map is None or len(execution_device_map) <= 1:
                 return None

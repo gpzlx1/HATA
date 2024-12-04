@@ -43,6 +43,7 @@ indptr = torch.tensor([i * seq_len for i in range(bs + 1)],
                       dtype=torch.int32,
                       device="cuda:0")
 offsets = torch.full((bs, ), 0, dtype=torch.int32, device="cuda:0")
+
 fl_q, fl_k = flashinfer.apply_rope(query_states.view(-1, head, head_dim),
                                    key_states.view(-1, head, head_dim),
                                    indptr,

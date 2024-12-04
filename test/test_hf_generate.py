@@ -38,8 +38,9 @@ dataset = Dataset.from_list(dataset)
 
 if __name__ == "__main__":
     # i = int(sys.argv[1])
-    device = "cuda:5"
+    device = "cuda:0"
     torch.cuda.set_device(device)
+    torch.manual_seed(42)
 
     # model_path = "/nfs/shared_LLM_model/meta-llama/Llama-2-7b-chat-hf"
     model_path = "/nfs/shared_LLM_model/lmsys/longchat-7b-v1.5-32k"
@@ -47,21 +48,25 @@ if __name__ == "__main__":
     # model_path = "/nfs/shared_LLM_model/facebook/opt-13b"
     tokenizer = AutoTokenizer.from_pretrained(model_path)
 
-    from myTransformer.models.modeling_llama_fa import CustomLlamaForCausalLM
-    
+    from myTransformer.models.modeling_llama_hash import CustomLlamaForCausalLM
+
     config = AutoConfig.from_pretrained(model_path)
-    config._attn_implementation = "sdpa"
+    config._attn_implementation = "flash_attention_2"
     model = CustomLlamaForCausalLM.from_pretrained(model_path,
-                                             torch_dtype=torch.float16,
-                                             config=config)
+                                                   torch_dtype=torch.float16,
+                                                   config=config)
     print(model)
     # exit()
     model = model.eval().to(device)
 
-    generation_kwargs = { 
-        "max_gpu_cache_memory": 32212254720, # 30GB
+    generation_kwargs = {
+        "max_gpu_cache_memory": 22212254720,  # 30GB
         "page_num": 1000,
         "page_size": 16,
+        "hash_rbits": 256,
+        "hash_weights_path":
+        "/root/workspace/myoffloading/KVOffloading/model_weights/longchat-7b-v1.5-32k-256",
+        "sparse_ratio": 0.1,
     }
     generation_config = GenerationConfig(**generation_kwargs)
 

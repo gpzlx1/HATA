@@ -59,6 +59,19 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
         model = CustomLlamaForCausalLM.from_pretrained(model_name_or_path,
                                                        config=model_config)
 
+    elif method == "hash":
+        generate_config = {
+            "max_gpu_cache_memory": 25 * 1024 * 1024 * 1024,
+            "hash_rbits": 128,
+            "hash_weights_path":
+            "/root/workspace/myoffloading/KVOffloading/model_weights/longchat-7b-v1.5-32k-128",
+            "sparse_ratio": 0.1,
+        }
+        model_config._attn_implementation = "sdpa"
+        from myTransformer.models.modeling_llama_hash import CustomLlamaForCausalLM
+        model = CustomLlamaForCausalLM.from_pretrained(model_name_or_path,
+                                                       config=model_config)
+
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path,
                                               fast_tokenizer=True,
                                               use_fast=True)
@@ -104,7 +117,6 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
 
     for key, value in generate_config.items():
         setattr(model.generation_config, key, value)
-            
 
     return model, tokenizer, generate_kwarg, apply_chat_template
 

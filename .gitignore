@@ -7,3 +7,6 @@ __pycache__
 *.log
 *.pt
 *venv*
+3rdparty/rmm
+3rdparty/raft
+3rdparty/spdlog

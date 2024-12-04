@@ -1,0 +1,15 @@
+#pragma once
+
+#include <ATen/cuda/CUDAContext.h>
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <torch/script.h>
+
+namespace kvlib {
+
+torch::Tensor AddCUDA(torch::Tensor a, torch::Tensor b, torch::Tensor c);
+torch::Tensor HammingCUDA(torch::Tensor keys, torch::Tensor querys);
+torch::Tensor TopkCUDA(torch::Tensor data, int32_t k, bool largest);
+torch::Tensor EncodeCUDA(torch::Tensor data, torch::Tensor hash_weight);
+
+}  // namespace kvlib

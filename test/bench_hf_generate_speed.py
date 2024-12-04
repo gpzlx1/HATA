@@ -20,7 +20,11 @@ def bench_prefill_decode_speed(model, tokenizer, prefill_len, batch_size):
     generation_kwargs = {
         "page_num": 3000,
         "page_size": 16,
-        "max_gpu_cache_memory": 32212254720, # 30GB
+        "max_gpu_cache_memory": 20212254720,  # 30GB
+        "hash_rbits": 128,
+        "hash_weights_path":
+        "/root/workspace/myoffloading/KVOffloading/model_weights/longchat-7b-v1.5-32k-128",
+        "sparse_ratio": 0.1,
     }
     generation_config = GenerationConfig(**generation_kwargs)
 
@@ -89,17 +93,17 @@ if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained(model_path)
 
     config = AutoConfig.from_pretrained(model_path)
-    config._attn_implementation = "sdpa"
+    config._attn_implementation = "flash_attention_2"
 
     print(config)
-    from myTransformer.models.modeling_llama_fa import CustomLlamaForCausalLM
+    from myTransformer.models.modeling_llama_hash import CustomLlamaForCausalLM
     model = CustomLlamaForCausalLM.from_pretrained(model_path,
-                                             torch_dtype=torch.float16,
-                                             config=config)
+                                                   torch_dtype=torch.float16,
+                                                   config=config)
     model.generation_config.cache_implementation = "static"
     model = model.eval().to(device)
 
-    batch_size = 2
+    batch_size = 1
     print(f"batch_size: {batch_size}")
     for prefill_len in [1000, 2000, 4000, 8000, 16000, 32000]:
         bench_prefill_decode_speed(model, tokenizer, prefill_len, batch_size)

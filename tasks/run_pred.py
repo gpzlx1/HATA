@@ -64,6 +64,7 @@ def pred_loop_func(args, rank, task_queue, dataset_manager):
         model = dispatch_model(model, device_map=device_map)
     else:
         device = f"cuda:{device_ids[0]}"
+        torch.cuda.set_device(device)
         model = model.to(device)
 
     for id in device_ids:
@@ -134,12 +135,7 @@ if __name__ == "__main__":
                         help="Evaluate on LongBench-E")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--config_file", type=str, default="")
-    parser.add_argument(
-        "--method",
-        type=str,
-        default="flashattn",
-        choices=["flashinfer", "flashattn"],
-    )
+    parser.add_argument("--method", type=str, default="flashattn")
     parser.add_argument("--write_in_time", action="store_true")
     parser.add_argument("--mp_num", default=1, type=int)
     parser.add_argument("--pp_num", default=1, type=int)

@@ -57,7 +57,7 @@ setup(
     description="",
     long_description="",
     packages=find_packages(),
-    # ext_modules=[CMakeExtension("KVLib", "..")],
-    # cmdclass={"build_ext": CMakeBuild},
+    ext_modules=[CMakeExtension("KVLib", "..")],
+    cmdclass={"build_ext": CMakeBuild},
     zip_safe=False,
 )
