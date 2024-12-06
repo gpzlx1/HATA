@@ -1,15 +1,15 @@
 from typing import Dict, Optional, Union, Any
 import torch
-from transformers.cache_utils import Cache
 from transformers.configuration_utils import PretrainedConfig
 from transformers.generation.configuration_utils import GenerationConfig
 from .kernels.triton_hash_encode import prefill_hash_encode, decode_hash_encode
 from .kernels.triton_score_process import hash_score_process
+from .kvcache_fa import CustomStaticCache
 import KVLib
 import os
 
 
-class HashStaticCache(Cache):
+class HashStaticCache(CustomStaticCache):
 
     def __init__(
         self,
@@ -24,31 +24,28 @@ class HashStaticCache(Cache):
         num_skip_layers: int = 2,
         hash_weights_path: str = None,
     ) -> None:
-        super().__init__()
+        super().__init__(config, device, dtype, max_gpu_cache_memory_size,
+                         layer_device_map)
+        self.hash_rbits = hash_rbits
+        self.sparse_ratio = sparse_ratio
+        self.hash_weights_path = hash_weights_path
+        self.num_skip_layers = num_skip_layers
 
-        self.max_gpu_cache_memory_size = max_gpu_cache_memory_size
-        self.dtype = config.torch_dtype
-        self.num_layers = config.num_hidden_layers
-        self.head_dim = (config.head_dim if hasattr(config, "head_dim") else
-                         config.hidden_size // config.num_attention_heads)
-        self.num_key_value_heads = (config.num_attention_heads if getattr(
-            config, "num_key_value_heads", None) is None else
-                                    config.num_key_value_heads)
-        self.num_heads = config.num_attention_heads
-        self.layer_devices = []
+    def build_cache(self):
+
         self.layer_caches = []
         self.max_layer_caches = []
+
         self.layer_hash_caches = []
         self.max_layer_hash_caches = []
+
         self.layer_norm_caches = []
         self.max_layer_norm_caches = []
-        self.hash_weights = []
-        self.hash_rbits = hash_rbits
-        assert self.hash_rbits % 32 == 0
-        self.hash_dim = hash_rbits // 32
 
-        self.num_skip_layers = num_skip_layers
-        self.sparse_ratio = sparse_ratio
+        self.hash_weights = []
+
+        assert self.hash_rbits % 32 == 0
+        self.hash_dim = self.hash_rbits // 32
 
         per_token_per_head_kv_size = self.dtype.itemsize * self.head_dim * 2
         per_token_per_head_hash_size = torch.int32.itemsize * self.hash_dim + self.dtype.itemsize
@@ -76,11 +73,8 @@ class HashStaticCache(Cache):
         norm_numel = int(self.each_layer_max_norm_cache / self.dtype.itemsize)
         self.each_layer_max_norm_numel = norm_numel
 
-        for l in range(config.num_hidden_layers):
-            if layer_device_map is not None:
-                layer_device = layer_device_map[l]
-            else:
-                layer_device = device
+        for l in range(self.num_layers):
+            layer_device = self.layer_devices[l]
             self.layer_devices.append(layer_device)
 
             self.layer_caches.append(None)
@@ -101,14 +95,14 @@ class HashStaticCache(Cache):
                     torch.zeros((norm_numel, ),
                                 dtype=self.dtype,
                                 device=layer_device))
-                if hash_weights_path is None:
+                if self.hash_weights_path is None:
                     hash_weight = torch.randn((self.head_dim, self.hash_rbits),
                                               dtype=self.dtype,
                                               device=layer_device)
                 else:
                     hash_weight = torch.load(
                         os.path.join(
-                            hash_weights_path,
+                            self.hash_weights_path,
                             f"hash_weight_layer_{l:02d}.pt")).to(layer_device)
                 self.hash_weights.append(hash_weight)
             else:
@@ -130,69 +124,6 @@ class HashStaticCache(Cache):
                          device=self.layer_devices[0]))
 
         self.query_code_buffer = None
-
-    def get_seq_length(self, layer_idx: Optional[int] = 0) -> int:
-        return self.seq_len
-
-    def get_max_length(self) -> Optional[int]:
-        return self.max_seq_len
-
-    def reorder_cache(self, beam_idx: torch.LongTensor):
-        raise NotImplementedError
-
-    def append(self,
-               key_states: torch.Tensor,
-               layer_idx: int,
-               type="key",
-               inc_seq_len=True):
-
-        kv_numel = key_states.shape[0]
-        q_len = kv_numel // self.curr_batch_size
-
-        assert q_len < self.max_seq_len, "q_len should be less than max_seq_len"
-
-        key_states = key_states.view(self.curr_batch_size, q_len,
-                                     self.num_key_value_heads, self.head_dim)
-
-        type_idx = 0 if type == "key" else 1
-
-        self.layer_caches[layer_idx][type_idx, :, self.seq_len:self.seq_len +
-                                     q_len, :, :] = key_states
-        key_states = self.layer_caches[layer_idx][type_idx, :, :self.seq_len +
-                                                  q_len, :, :]
-
-        if inc_seq_len and layer_idx == len(self.layer_caches) - 1:
-            self.seq_len += self.get_cur_q_len()
-
-        return key_states
-
-    def value_proj_and_append(self,
-                              hidden_states,
-                              value_weightsT,
-                              layer_idx,
-                              inc_seq_len=False):
-        hidden_size = value_weightsT.shape[0]
-        hidden_states = hidden_states.view(self.curr_batch_size, -1,
-                                           hidden_size)
-        q_len = hidden_states.shape[1]
-        self.layer_caches[layer_idx] = self.layer_caches[layer_idx].view(
-            2, self.curr_batch_size, -1, hidden_size)
-        torch.matmul(
-            hidden_states,
-            value_weightsT,
-            out=self.layer_caches[layer_idx][1, :, self.seq_len:self.seq_len +
-                                             q_len, :])
-        self.layer_caches[layer_idx] = self.layer_caches[layer_idx].view(
-            2, self.curr_batch_size, -1, self.num_key_value_heads,
-            self.head_dim)
-
-        value_states = self.layer_caches[layer_idx][1, :, :self.seq_len +
-                                                    q_len, :, :]
-
-        if inc_seq_len and layer_idx == self.num_layers - 1:
-            self.seq_len += q_len
-
-        return value_states
 
     def reset(self, batch_size):
         self.curr_batch_size = batch_size
@@ -238,23 +169,6 @@ class HashStaticCache(Cache):
                                              self.hash_dim,
                                              dtype=torch.int32,
                                              device=self.layer_devices[0])
-
-    def alloc(self, q_len):
-        self._rope_indptr = torch.tensor(
-            [i * q_len for i in range(self.curr_batch_size + 1)],
-            dtype=torch.int32,
-            device=self.layer_caches[0].device)
-        self._rope_offsets = torch.full((self.curr_batch_size, ),
-                                        self.seq_len,
-                                        dtype=torch.int32,
-                                        device=self.layer_caches[0].device)
-        self.cur_q_len = q_len
-
-    def get_rope_metadata(self):
-        return self._rope_indptr, self._rope_offsets
-
-    def get_cur_q_len(self):
-        return self.cur_q_len
 
     def get_hash_weights(self, layer_idx):
         return self.hash_weights[layer_idx]
@@ -304,7 +218,6 @@ class HashStaticCache(Cache):
             layer_idx][:, :self.layer_hash_seq_lens[layer_idx], :, :]
         hamming_dist = KVLib.hamming_distance(past_key_hash_cache,
                                               encoded_query)
-        # score = hamming_dist.transpose(-1, -2).contiguous()
         score = hash_score_process(
             hamming_dist,
             self.layer_norm_caches[layer_idx]
@@ -384,6 +297,7 @@ def prepare_cache_for_generation(
             sparse_ratio=generation_config.sparse_ratio,
             hash_weights_path=generation_config.hash_weights_path,
         )
+        self._cache.build_cache()
 
     self._cache.reset(batch_size)
     cache_name = "past_key_values"

@@ -26,7 +26,16 @@ class CustomStaticCache(Cache):
         self.num_key_value_heads = (config.num_attention_heads if getattr(
             config, "num_key_value_heads", None) is None else
                                     config.num_key_value_heads)
+        self.num_heads = config.num_attention_heads
         self.layer_devices = []
+        for l in range(config.num_hidden_layers):
+            if layer_device_map is not None:
+                layer_device = layer_device_map[l]
+            else:
+                layer_device = device
+            self.layer_devices.append(layer_device)
+
+    def build_cache(self):
         self.layer_caches = []
         self.max_layer_caches = []
 
@@ -34,11 +43,8 @@ class CustomStaticCache(Cache):
         numel = int(self.each_layer_max_gpu_cache / self.dtype.itemsize)
         self.each_layer_max_numel = numel
 
-        for l in range(config.num_hidden_layers):
-            if layer_device_map is not None:
-                layer_device = layer_device_map[l]
-            else:
-                layer_device = device
+        for l in range(self.num_layers):
+            layer_device = self.layer_devices[l]
             self.layer_devices.append(layer_device)
             self.layer_caches.append(None)
             self.max_layer_caches.append(
@@ -56,29 +62,6 @@ class CustomStaticCache(Cache):
 
     def reorder_cache(self, beam_idx: torch.LongTensor):
         raise NotImplementedError
-
-    def key_append(self,
-                   key_states: torch.Tensor,
-                   layer_idx: int,
-                   inc_seq_len=True):
-
-        kv_numel = key_states.shape[0]
-        q_len = kv_numel // self.curr_batch_size
-
-        assert q_len < self.max_seq_len, "q_len should be less than max_seq_len"
-
-        key_states = key_states.view(self.curr_batch_size, q_len,
-                                     self.num_key_value_heads, self.head_dim)
-        self.layer_caches[layer_idx][0, :, self.seq_len:self.seq_len +
-                                     q_len, :, :] = key_states
-
-        key_states = self.layer_caches[layer_idx][0, :, :self.seq_len +
-                                                  q_len, :, :]
-
-        if inc_seq_len and layer_idx == len(self.layer_caches) - 1:
-            self.seq_len += self.get_cur_q_len()
-
-        return key_states
 
     def append(self,
                key_states: torch.Tensor,
@@ -222,6 +205,7 @@ def prepare_cache_for_generation(
             dtype=self.dtype,
             layer_device_map=layer_device_map,
         )
+        self._cache.build_cache()
 
     self._cache.reset(batch_size)
     cache_name = "past_key_values"
