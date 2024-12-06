@@ -140,10 +140,11 @@ class HashStaticCache(Cache):
     def reorder_cache(self, beam_idx: torch.LongTensor):
         raise NotImplementedError
 
-    def key_append(self,
-                   key_states: torch.Tensor,
-                   layer_idx: int,
-                   inc_seq_len=True):
+    def append(self,
+               key_states: torch.Tensor,
+               layer_idx: int,
+               type="key",
+               inc_seq_len=True):
 
         kv_numel = key_states.shape[0]
         q_len = kv_numel // self.curr_batch_size
@@ -152,10 +153,12 @@ class HashStaticCache(Cache):
 
         key_states = key_states.view(self.curr_batch_size, q_len,
                                      self.num_key_value_heads, self.head_dim)
-        self.layer_caches[layer_idx][0, :, self.seq_len:self.seq_len +
-                                     q_len, :, :] = key_states
 
-        key_states = self.layer_caches[layer_idx][0, :, :self.seq_len +
+        type_idx = 0 if type == "key" else 1
+
+        self.layer_caches[layer_idx][type_idx, :, self.seq_len:self.seq_len +
+                                     q_len, :, :] = key_states
+        key_states = self.layer_caches[layer_idx][type_idx, :, :self.seq_len +
                                                   q_len, :, :]
 
         if inc_seq_len and layer_idx == len(self.layer_caches) - 1:
@@ -301,6 +304,7 @@ class HashStaticCache(Cache):
             layer_idx][:, :self.layer_hash_seq_lens[layer_idx], :, :]
         hamming_dist = KVLib.hamming_distance(past_key_hash_cache,
                                               encoded_query)
+        # score = hamming_dist.transpose(-1, -2).contiguous()
         score = hash_score_process(
             hamming_dist,
             self.layer_norm_caches[layer_idx]

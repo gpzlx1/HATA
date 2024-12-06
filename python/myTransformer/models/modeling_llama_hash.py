@@ -133,13 +133,23 @@ class CustomLlamaAttention(LlamaFlashAttention2):
         _, hidden_size = hidden_states.size()
 
         query_states = self.q_proj(hidden_states)
-        key_states = self.k_proj(hidden_states)
-        value_states = past_key_value.value_proj_and_append(
-            hidden_states, self.v_proj.weight.T, self.layer_idx)
-
         query_states = query_states.view(-1, self.num_heads, self.head_dim)
+
+        key_states = self.k_proj(hidden_states)
         key_states = key_states.view(-1, self.num_key_value_heads,
                                      self.head_dim)
+
+        if batch_size == 1:
+            value_states = past_key_value.value_proj_and_append(
+                hidden_states,
+                self.v_proj.weight.T,
+                self.layer_idx,
+                inc_seq_len=False)
+        else:
+            value_states = self.v_proj(hidden_states)
+            value_states = value_states.view(-1, self.num_key_value_heads,
+                                             self.head_dim)
+
         torch.cuda.nvtx.range_pop()
 
         torch.cuda.nvtx.range_push("rope")
@@ -157,7 +167,15 @@ class CustomLlamaAttention(LlamaFlashAttention2):
             torch.cuda.nvtx.range_pop()
 
         torch.cuda.nvtx.range_push("kvcache append")
-        key_states = past_key_value.key_append(key_states, self.layer_idx)
+        if batch_size > 1:
+            value_states = past_key_value.append(value_states,
+                                                 self.layer_idx,
+                                                 type="value",
+                                                 inc_seq_len=False)
+        key_states = past_key_value.append(key_states,
+                                           self.layer_idx,
+                                           type="key",
+                                           inc_seq_len=True)
         torch.cuda.nvtx.range_pop()
 
         query_states = query_states.view(batch_size, -1, self.num_heads,

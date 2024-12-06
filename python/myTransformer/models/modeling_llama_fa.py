@@ -124,26 +124,45 @@ class CustomLlamaAttention(LlamaFlashAttention2):
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor],
                Optional[Tuple[torch.Tensor]]]:
 
+        batch_size = past_key_value.curr_batch_size
+        q_len = past_key_value.get_cur_q_len()
         _, hidden_size = hidden_states.size()
-        query_states = self.q_proj(hidden_states)
-        key_states = self.k_proj(hidden_states)
-        value_states = past_key_value.value_proj_and_append(
-            hidden_states, self.v_proj.weight.T, self.layer_idx)
 
+        query_states = self.q_proj(hidden_states)
         query_states = query_states.view(-1, self.num_heads, self.head_dim)
+
+        key_states = self.k_proj(hidden_states)
         key_states = key_states.view(-1, self.num_key_value_heads,
                                      self.head_dim)
+
+        if batch_size == 1:
+            value_states = past_key_value.value_proj_and_append(
+                hidden_states,
+                self.v_proj.weight.T,
+                self.layer_idx,
+                inc_seq_len=False)
+        else:
+            value_states = self.v_proj(hidden_states)
+            value_states = value_states.view(-1, self.num_key_value_heads,
+                                             self.head_dim)
 
         query_states, key_states = self.rotary_emb(query_states, key_states,
                                                    past_key_value)
 
-        key_states = past_key_value.key_append(key_states, self.layer_idx)
+        if batch_size > 1:
+            value_states = past_key_value.append(value_states,
+                                                 self.layer_idx,
+                                                 type="value",
+                                                 inc_seq_len=False)
+        key_states = past_key_value.append(key_states,
+                                           self.layer_idx,
+                                           type="key",
+                                           inc_seq_len=True)
 
         batch_size = past_key_value.curr_batch_size
         query_states = query_states.view(batch_size, -1, self.num_heads,
                                          self.head_dim)
 
-        q_len = past_key_value.get_cur_q_len()
         attn_output = _flash_attention_forward(
             query_states,
             key_states,
