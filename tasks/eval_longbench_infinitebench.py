@@ -260,7 +260,7 @@ def code_debug_score(pred, label, **kwargs) -> bool:
         if len(pred) < idx + len(prefix) + 1:
             ret = False
             break
-        pred = pred[idx + len(prefix) + 1 :]
+        pred = pred[idx + len(prefix) + 1:]
         for s in [label_c, fn_name]:
             if pred.startswith(s):
                 ret = True
@@ -281,7 +281,7 @@ def code_debug_score(pred, label, **kwargs) -> bool:
         if len(pred) < idx + len(prefix2) + 1:
             ret = False
             break
-        pred = pred[idx + len(prefix2) + 1 :]
+        pred = pred[idx + len(prefix2) + 1:]
         for s in [label_c, fn_name]:
             if pred.startswith(s):
                 ret = True
@@ -359,7 +359,7 @@ def longbook_choice_score(pred, label, **kwargs) -> bool:
         # The prediction ends with this prefix
         if len(pred) < idx + len(prefix) + 1:
             return False
-        after_prefix = pred[idx + len(prefix) + 1 :]
+        after_prefix = pred[idx + len(prefix) + 1:]
         for s in label:
             if after_prefix.startswith(s):
                 return True
@@ -401,42 +401,26 @@ def math_calc_score(pred, label, **kwargs) -> float:
 dataset2metric = {
     # longbench
     "narrativeqa": qa_f1_score,
-    "narrativeqa_retrieval": needle_score,
     "qasper": qa_f1_score,
-    "qasper_retrieval": needle_score,
     "multifieldqa_en": qa_f1_score,
-    "multifieldqa_en_retrieval": needle_score,
     "multifieldqa_zh": qa_f1_zh_score,
     "hotpotqa": qa_f1_score,
-    "hotpotqa_retrieval": needle_score,
     "2wikimqa": qa_f1_score,
-    "2wikimqa_retrieval": needle_score,
     "musique": qa_f1_score,
-    "musique_retrieval": needle_score,
     "dureader": rouge_zh_score,
     "gov_report": rouge_score,
-    "gov_report_retrieval": needle_score,
     "qmsum": rouge_score,
-    "qmsum_retrieval": needle_score,
     "multi_news": rouge_score,
-    "multi_news_retrieval": needle_score,
     "vcsum": rouge_zh_score,
     "trec": classification_score,
-    "trec_retrieval": needle_score,
     "triviaqa": qa_f1_score,
-    "triviaqa_retrieval": needle_score,
     "samsum": rouge_score,
-    "samsum_retrieval": needle_score,
     "lsht": classification_score,
     "passage_retrieval_en": retrieval_score,
-    "passage_retrieval_en_retrieval": needle_score,
     "passage_count": count_score,
-    "passage_count_retrieval": needle_score,
     "passage_retrieval_zh": retrieval_zh_score,
     "lcc": code_sim_score,
-    "lcc_retrieval": needle_score,
     "repobench-p": code_sim_score,
-    "repobench-p_retrieval": needle_score,
 
     # infinitebench
     # Retrieve
@@ -507,8 +491,8 @@ def scorer(dataset, predictions, answers, all_classes):
             for ground_truth in ground_truths:
                 score = max(
                     score, dataset2metric[dataset](prediction,
-                                                ground_truth,
-                                                all_classes=all_classes))
+                                                   ground_truth,
+                                                   all_classes=all_classes))
         total_score += score
     return round(100 * total_score / len(predictions), 2)
 

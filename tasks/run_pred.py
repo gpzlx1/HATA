@@ -6,7 +6,7 @@ from tqdm import tqdm
 from functools import partial
 from accelerate import dispatch_model, infer_auto_device_map
 from accelerate.utils import get_balanced_memory
-from dataloader import LongBenchManager, InfiniteBenchManager
+from dataloader import LongBenchManager, InfiniteBenchManager, NIAHManager
 
 from utils import DefaultDataCollator
 from llama_utils import (
@@ -79,21 +79,29 @@ def pred_loop_func(args, rank, task_queue, dataset_manager):
             if data is None:
                 break
             warm_up, dataset_name, x, generate_kwargs = data
-
             indices = x.pop("index").tolist()
+
+            out_info = x.copy()
+
             x["input_ids"] = x["input_ids"].to(model.device)
             x["attention_mask"] = x["attention_mask"].to(model.device)
-            answers = x.pop("answers")
-            length = x.pop("length")
-            all_classes = x.pop("all_classes")
+
+            preserve_domins = ["input_ids", "attention_mask"]
+
+            for key in out_info:
+                num_obj = len(out_info[key])
+                if key not in preserve_domins:
+                    x.pop(key)
+
+            for key in preserve_domins:
+                out_info.pop(key)
+
             outputs = comm_generate(x, generate_kwargs, model, tokenizer)
 
             if not warm_up:
-                for pred, answer, c, l in zip(outputs, answers, all_classes,
-                                              length):
-                    dataset_manager.write_one_result_v2(
-                        args.output_dir, pred, answer, c, l.item(),
-                        dataset_name)
+                for i in range(num_obj):
+                    dataset_manager.write_one_result_v3(
+                        args.output_dir, outputs[i], i, out_info, dataset_name)
 
             # reset timer
             signal.alarm(timeout)
@@ -127,7 +135,7 @@ if __name__ == "__main__":
         "--dataset_name",
         type=str,
         default="longbench",
-        choices=["longbench", "infinitebench"],
+        choices=["longbench", "infinitebench", "niah"],
     )
     parser.add_argument("--output_dir", type=str, required=True)
     parser.add_argument("--e",
@@ -140,7 +148,6 @@ if __name__ == "__main__":
     parser.add_argument("--mp_num", default=1, type=int)
     parser.add_argument("--pp_num", default=1, type=int)
     parser.add_argument("--batch_size", default=1, type=int)
-    parser.add_argument("--retrieval", action="store_true")
     parser.add_argument("--min_seq_len", type=int, default=16000)
     parser.add_argument("--breakdown", action="store_true")
     args = parser.parse_args()
@@ -154,12 +161,16 @@ if __name__ == "__main__":
             args.dataset_path,
             "test",
             args.e,
-            args.retrieval,
         )
-        tasks = dataset_manager.get_dataset_names(with_e=args.e,
-                                                  retrieval=args.retrieval)
-    else:
+        tasks = dataset_manager.get_dataset_names(with_e=args.e)
+    elif args.dataset_name == "infinitebench":
         dataset_manager = InfiniteBenchManager(
+            args.dataset_path,
+            args.dataset_path,
+        )
+        tasks = dataset_manager.get_dataset_names()
+    else:
+        dataset_manager = NIAHManager(
             args.dataset_path,
             args.dataset_path,
         )
@@ -185,10 +196,6 @@ if __name__ == "__main__":
         eos_token_id = tokenizer.eos_token_id
     if isinstance(eos_token_id, int):
         eos_token_id = [eos_token_id]
-
-    # print(model.model.layers[0].input_layernorm.weight)
-    # print(model.model.layers[1].input_layernorm.weight)
-    # exit()
 
     del model
 
@@ -221,7 +228,9 @@ if __name__ == "__main__":
 
         remove_columns = []
         for key in raw_data[0]:
-            if key not in ["length", "all_classes", "answers"]:
+            if key not in [
+                    "length", "all_classes", "answers", "depth_percent"
+            ]:
                 remove_columns.append(key)
         encoded_data = raw_data.map(
             process_fn,

@@ -8,6 +8,7 @@ from datasets import load_dataset, Dataset
 from utils import DefaultDataCollator
 
 datasets_prompt = {
+    # LongBench
     "narrativeqa":
     "You are given a story, which can be either a novel or a movie script, and a question. Answer the question asconcisely as you can, using a single phrase if possible. Do not provide any explanation.\n\nStory: {context}\n\nNow, answer the question based on the story asconcisely as you can, using a single phrase if possible. Do not provide any explanation.\n\nQuestion: {input}\n\nAnswer:",
     "qasper":
@@ -51,73 +52,39 @@ datasets_prompt = {
     "repobench-p":
     "Please complete the code given below. \n{context}{input}Next line of code:\n",
 
-    "narrativeqa_retrieval":
-    "There is an important info hidden inside a lot of irrelevant text. Find it and memorize them. I will quiz you about the important information there.\n\n{context}\n\n{input}",
-    "qasper_retrieval":
-    "There is an important info hidden inside a lot of irrelevant text. Find it and memorize them. I will quiz you about the important information there.\n\n{context}\n\n{input}",
-    "multifieldqa_en_retrieval":
-    "There is an important info hidden inside a lot of irrelevant text. Find it and memorize them. I will quiz you about the important information there.\n\n{context}\n\n{input}",
-    "hotpotqa_retrieval":
-    "There is an important info hidden inside a lot of irrelevant text. Find it and memorize them. I will quiz you about the important information there.\n\n{context}\n\n{input}",
-    "2wikimqa_retrieval":
-    "There is an important info hidden inside a lot of irrelevant text. Find it and memorize them. I will quiz you about the important information there.\n\n{context}\n\n{input}",
-    "musique_retrieval":
-    "There is an important info hidden inside a lot of irrelevant text. Find it and memorize them. I will quiz you about the important information there.\n\n{context}\n\n{input}",
-    "dureader_retrieval":
-    "There is an important info hidden inside a lot of irrelevant text. Find it and memorize them. I will quiz you about the important information there.\n\n{context}\n\n{input}",
-    "gov_report_retrieval":
-    "There is an important info hidden inside a lot of irrelevant text. Find it and memorize them. I will quiz you about the important information there.\n\n{context}\n\n{input}",
-    "qmsum_retrieval":
-    "There is an important info hidden inside a lot of irrelevant text. Find it and memorize them. I will quiz you about the important information there.\n\n{context}\n\n{input}",
-    "multi_news_retrieval":
-    "There is an important info hidden inside a lot of irrelevant text. Find it and memorize them. I will quiz you about the important information there.\n\n{context}\n\n{input}",
-    "trec_retrieval":
-    "There is an important info hidden inside a lot of irrelevant text. Find it and memorize them. I will quiz you about the important information there.\n\n{context}\n\n{input}",
-    "triviaqa_retrieval":
-    "There is an important info hidden inside a lot of irrelevant text. Find it and memorize them. I will quiz you about the important information there.\n\n{context}\n\n{input}",
-    "samsum_retrieval":
-    "There is an important info hidden inside a lot of irrelevant text. Find it and memorize them. I will quiz you about the important information there.\n\n{context}\n\n{input}",
-    "lsht_retrieval":
-    "There is an important info hidden inside a lot of irrelevant text. Find it and memorize them. I will quiz you about the important information there.\n\n{context}\n\n{input}",
-    "passage_count_retrieval":
-    "There is an important info hidden inside a lot of irrelevant text. Find it and memorize them. I will quiz you about the important information there.\n\n{context}\n\n{input}",
-    "passage_retrieval_en_retrieval":
-    "There is an important info hidden inside a lot of irrelevant text. Find it and memorize them. I will quiz you about the important information there.\n\n{context}\n\n{input}",
-    "lcc_retrieval":
-    "There is an important info hidden inside a lot of irrelevant text. Find it and memorize them. I will quiz you about the important information there.\n\n{context}\n\n{input}",
-    "repobench-p_retrieval":
-    "There is an important info hidden inside a lot of irrelevant text. Find it and memorize them. I will quiz you about the important information there.\n\n{context}\n\n{input}",
+    # Needle-in-a-Haystack
+    "niah":
+    "A special magic {key} number is hidden within the following text. Make sure to memorize it. I will quiz you about the number afterwards.\n\n{context}\n\nPlease answer this question: {input}\n Don't say anything else. The special magic {key} number is:",
 
     # InfiniteBench
-    "passkey": 
+    "passkey":
     "There is an important info hidden inside a lot of irrelevant text. Find it and memorize them. I will quiz you about the important information there.\n\n{context}\n\n{input}",
-    "all_passkey": 
+    "all_passkey":
     "There is an important info hidden inside a lot of irrelevant text. Find it and memorize them. I will quiz you about the important information there.\n\n{context}\n\n{input}",
-    "number_string": 
+    "number_string":
     "There is an important info hidden inside a lot of irrelevant text. Find it. I will quiz you about the important information there.\n\n{context}\n\n{input}",
-    "kv_retrieval": 
-    "Extract the value corresponding to the specified key {key} in the JSON object below.\n\n{context}\n\n{input}", 
-    "longbook_qa_eng": 
-    "Read the book below and answer a question.\n\n{context}\n\nQuestion: {input}\n\nPlease answer as short as possible. The answer is:", 
-    "longbook_qa_eng_question_first": 
-    "Read the book below and answer the question.\n\nQuestion: {input}\n\n{context}\n\nQuestion: {input}\n\nPlease answer as short as possible. The answer is:", 
-    "longbook_choice_eng": 
+    "kv_retrieval":
+    "Extract the value corresponding to the specified key {key} in the JSON object below.\n\n{context}\n\n{input}",
+    "longbook_qa_eng":
+    "Read the book below and answer a question.\n\n{context}\n\nQuestion: {input}\n\nPlease answer as short as possible. The answer is:",
+    "longbook_qa_eng_question_first":
+    "Read the book below and answer the question.\n\nQuestion: {input}\n\n{context}\n\nQuestion: {input}\n\nPlease answer as short as possible. The answer is:",
+    "longbook_choice_eng":
     "Read the book and answer the question.\n\n{context}\n\nQuestion: {input}\n\nOnly one of the following options is correct, tell me the answer using one single letter (A, B, C, or D). Don't say anything else.\nA. {OPTION_A}\nB. {OPTION_B}\nC. {OPTION_C}\nD. {OPTION_D}",
-    "longbook_sum_eng": 
+    "longbook_sum_eng":
     "Summarize the following book.\n\n{context}",
-    "longbook_qa_chn": 
+    "longbook_qa_chn":
     "请根据以下书籍回答我的问题。\n\n{context}\n\n问题：{input}\n请尽量简短地回答。",
-    "math_find": 
+    "math_find":
     "{prefix}\n\n{context}\n\n{input}",
-    "math_calc": 
+    "math_calc":
     "Compute the intermediate values in the following long expression.\n\n{context}",
-    "code_run": 
+    "code_run":
     "Following is a set of Python functions. There is a function called named {func}.\n\n{context}\n\nPlease give me the exact number of the return value of {func_call}. Be concise. Your response must end with the final returned value.",
-    "code_debug": 
-    "There is ONLY ONE function in the large project that is deliberately made to include an obvious error. Please find the function that contains the most obvious errors. I will give you four options to narrow your scope. You can inspect the options and think. Eventually, tell me the answer using one single letter (A, B, C, or D).\n\n{context}\n\nWhich funtion has deliberate error?\nA. {OPTION_A}\nB. {OPTION_B}\nC. {OPTION_C}\nD. {OPTION_D}\n\nGive me your answer for the function that has the deliberate and obvious error in A, B, C, or D. Your answer MUST be chosen from one of the four options without any explanation. If you cannot determine answers accurately, you also MUST provide the answer you think is most likely. Absolutely do not say you do not know or you need more information.", 
-    "longdialogue_qa_eng": 
+    "code_debug":
+    "There is ONLY ONE function in the large project that is deliberately made to include an obvious error. Please find the function that contains the most obvious errors. I will give you four options to narrow your scope. You can inspect the options and think. Eventually, tell me the answer using one single letter (A, B, C, or D).\n\n{context}\n\nWhich funtion has deliberate error?\nA. {OPTION_A}\nB. {OPTION_B}\nC. {OPTION_C}\nD. {OPTION_D}\n\nGive me your answer for the function that has the deliberate and obvious error in A, B, C, or D. Your answer MUST be chosen from one of the four options without any explanation. If you cannot determine answers accurately, you also MUST provide the answer you think is most likely. Absolutely do not say you do not know or you need more information.",
+    "longdialogue_qa_eng":
     "Below is a dialogue script where one random occurrence of a character name is replaced with \"$$MASK$$\", and you should try to guess who that character is.\n\nThe dialogue:\n\n---\n\n{context}\n\n---\n\nEnd of dialogue.\n\nWhich character is most likely \"$$MASK$$\"? Just say the name used by the scriptwriter (before the colon marks) of one single character and nothing else."
-
 }
 
 datasets_maxlen = {
@@ -143,22 +110,8 @@ datasets_maxlen = {
     "lcc": 64,
     "repobench-p": 64,
 
-    "narrativeqa_retrieval": 64,
-    "qasper_retrieval": 64,
-    "multifieldqa_en_retrieval": 64,
-    "hotpotqa_retrieval": 64,
-    "2wikimqa_retrieval": 64,
-    "musique_retrieval": 64,
-    "gov_report_retrieval": 64,
-    "qmsum_retrieval": 64,
-    "multi_news_retrieval": 64,
-    "trec_retrieval": 64,
-    "triviaqa_retrieval": 64,
-    "samsum_retrieval": 64,
-    "passage_count_retrieval": 64,
-    "passage_retrieval_en_retrieval": 64,
-    "lcc_retrieval": 64,
-    "repobench-p_retrieval": 64,
+    # Needle-in-a-Haystack
+    "niah": 64,
 
     # InfiniteBench
     "passkey": 12,
@@ -198,23 +151,10 @@ datasets_category = {
     "lcc": "Code Completion",
     "repobench-p": "Code Completion",
 
-    "narrativeqa_retrieval": "EN Single-Doc QA",
-    "qasper_retrieval": "EN Single-Doc QA",
-    "multifieldqa_en_retrieval": "EN Single-Doc QA",
-    "hotpotqa_retrieval": "EN Single-Doc QA",
-    "2wikimqa_retrieval": "EN Single-Doc QA",
-    "musique_retrieval": "EN Single-Doc QA",
-    "gov_report_retrieval": "EN Single-Doc QA",
-    "qmsum_retrieval": "EN Single-Doc QA",
-    "multi_news_retrieval": "EN Single-Doc QA",
-    "trec_retrieval": "EN Single-Doc QA",
-    "triviaqa_retrieval": "EN Single-Doc QA",
-    "samsum_retrieval": "EN Single-Doc QA",
-    "passage_count_retrieval": "EN Single-Doc QA",
-    "passage_retrieval_en_retrieval": "EN Single-Doc QA",
-    "lcc_retrieval": "EN Single-Doc QA",
-    "repobench-p_retrieval": "EN Single-Doc QA",
+    # Needle-in-a-Haystack
+    "niah": None,
 
+    # InfiniteBench
     "code_debug": None,
     "code_run": None,
     "passkey": None,
@@ -230,7 +170,7 @@ datasets_category = {
 }
 
 
-def load_custom_json_dataset(path, data_name):
+def load_niah_dataset(path, data_name):
     fin = open(os.path.join(path, data_name + ".jsonl"), "r", encoding="utf-8")
     lines = fin.readlines()
     fin.close()
@@ -241,9 +181,11 @@ def load_custom_json_dataset(path, data_name):
             "_id": eg["id"],
             "context": eg["context"],
             "input": eg["input"],
-            "answers": [eg["answer"]]
+            "answers": eg["answer"],
+            "length": eg["length"],
+            "depth_percent": eg["depth_percent"],
+            "key": eg["key"],
         }
-        instance["length"] = len(instance["context"].split())
         instance["all_classes"] = None
         ret.append(instance)
 
@@ -281,7 +223,9 @@ class DatasetManager:
     def write_results(self, ouput_dir, indices, preds, raw_data, dataset_name):
         if not os.path.exists(ouput_dir):
             os.makedirs(ouput_dir)
-        with open(os.path.join(ouput_dir, f"{dataset_name}.jsonl"), "w", encoding="utf-8") as f:
+        with open(os.path.join(ouput_dir, f"{dataset_name}.jsonl"),
+                  "w",
+                  encoding="utf-8") as f:
             for i, pred in zip(indices, preds):
                 json_obj = raw_data[i]
                 obj = {
@@ -296,7 +240,9 @@ class DatasetManager:
     def write_one_result(self, output_dir, pred, json_obj, dataset_name):
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
-        with open(os.path.join(output_dir, f"{dataset_name}.jsonl"), "a", encoding="utf-8") as f:
+        with open(os.path.join(output_dir, f"{dataset_name}.jsonl"),
+                  "a",
+                  encoding="utf-8") as f:
             obj = {
                 "pred": pred,
                 "answers": json_obj["answers"],
@@ -306,20 +252,39 @@ class DatasetManager:
             json.dump(obj, f, ensure_ascii=False)
             f.write("\n")
 
-    def write_one_result_v2(
-        self, output_dir, pred, answer, all_classes, length, dataset_name
-    ):
+    def write_one_result_v2(self, output_dir, pred, answer, all_classes,
+                            length, dataset_name):
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
-        with open(
-            os.path.join(output_dir, f"{dataset_name}.jsonl"), "a", encoding="utf-8"
-        ) as f:
+        with open(os.path.join(output_dir, f"{dataset_name}.jsonl"),
+                  "a",
+                  encoding="utf-8") as f:
             obj = {
                 "pred": pred,
                 "answers": answer,
                 "all_classes": all_classes,
                 "length": length,
             }
+            json.dump(obj, f, ensure_ascii=False)
+            f.write("\n")
+
+    def write_one_result_v3(self, output_dir, pred, index, out_info,
+                            dataset_name):
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        with open(os.path.join(output_dir, f"{dataset_name}.jsonl"),
+                  "a",
+                  encoding="utf-8") as f:
+            obj = {
+                "pred": pred,
+            }
+            for key in out_info:
+                assert key != "pred"
+                if isinstance(out_info[key][index], torch.Tensor):
+                    info = out_info[key][index].item()
+                else:
+                    info = out_info[key][index]
+                obj[key] = info
             json.dump(obj, f, ensure_ascii=False)
             f.write("\n")
 
@@ -330,104 +295,61 @@ class DatasetManager:
 
 class LongBenchManager(DatasetManager):
 
-    def __init__(self, path, data_dir, split, with_e=False, retrieval=False):
+    def __init__(self, path, data_dir, split, with_e=False):
         super().__init__(path, data_dir)
         self.with_e = with_e
-        self.retrieval = retrieval
         self.split = split
 
     @staticmethod
-    def get_dataset_names(with_e=False, retrieval=False):
-        if retrieval:
-            if with_e:
-                datasets = [
-                    "qasper_retrieval_e",
-                    "multifieldqa_en_retrieval_e",
-                    "hotpotqa_retrieval_e",
-                    "2wikimqa_retrieval_e",
-                    "gov_report_retrieval_e",
-                    "multi_news_retrieval_e",
-                    "trec_retrieval_e",
-                    "triviaqa_retrieval_e",
-                    "samsum_retrieval_e",
-                    "passage_count_retrieval_e",
-                    "passage_retrieval_en_retrieval_e",
-                    "lcc_retrieval_e",
-                    "repobench-p_retrieval_e",
-                ]
-            else:
-                datasets = [
-                    "narrativeqa_retrieval",
-                    "qasper_retrieval",
-                    "multifieldqa_en_retrieval",
-                    "hotpotqa_retrieval",
-                    "2wikimqa_retrieval",
-                    "musique_retrieval",
-                    "gov_report_retrieval",
-                    "qmsum_retrieval",
-                    "multi_news_retrieval",
-                    "trec_retrieval",
-                    "triviaqa_retrieval",
-                    "samsum_retrieval",
-                    "passage_count_retrieval",
-                    "passage_retrieval_en_retrieval",
-                    "lcc_retrieval",
-                    "repobench-p_retrieval",
-                ]
+    def get_dataset_names(with_e=False):
+        if with_e:
+            datasets = [
+                "qasper_e",
+                "multifieldqa_en_e",
+                "hotpotqa_e",
+                "2wikimqa_e",
+                "gov_report_e",
+                "multi_news_e",
+                "trec_e",
+                "triviaqa_e",
+                "samsum_e",
+                "passage_count_e",
+                "passage_retrieval_en_e",
+                "lcc_e",
+                "repobench-p_e",
+            ]
         else:
-            if with_e:
-                datasets = [
-                    "qasper_e",
-                    "multifieldqa_en_e",
-                    "hotpotqa_e",
-                    "2wikimqa_e",
-                    "gov_report_e",
-                    "multi_news_e",
-                    "trec_e",
-                    "triviaqa_e",
-                    "samsum_e",
-                    "passage_count_e",
-                    "passage_retrieval_en_e",
-                    "lcc_e",
-                    "repobench-p_e",
-                ]
-            else:
-                datasets = [
-                    "narrativeqa",
-                    "qasper",
-                    "multifieldqa_en",
-                    "multifieldqa_zh",
-                    "hotpotqa",
-                    "2wikimqa",
-                    "musique",
-                    "dureader",
-                    "gov_report",
-                    "qmsum",
-                    "multi_news",
-                    "vcsum",
-                    "trec",
-                    "triviaqa",
-                    "samsum",
-                    "lsht",
-                    "passage_count",
-                    "passage_retrieval_en",
-                    "passage_retrieval_zh",
-                    "lcc",
-                    "repobench-p",
-                ]
+            datasets = [
+                "narrativeqa",
+                "qasper",
+                "multifieldqa_en",
+                "multifieldqa_zh",
+                "hotpotqa",
+                "2wikimqa",
+                "musique",
+                "dureader",
+                "gov_report",
+                "qmsum",
+                "multi_news",
+                "vcsum",
+                "trec",
+                "triviaqa",
+                "samsum",
+                "lsht",
+                "passage_count",
+                "passage_retrieval_en",
+                "passage_retrieval_zh",
+                "lcc",
+                "repobench-p",
+            ]
 
         return datasets
 
     def get_data(self, dataset_name):
-        if self.retrieval:
-            data = load_custom_json_dataset(
-                self.data_dir,
-                dataset_name)
-        else:
-            data = load_dataset(self.path,
-                                dataset_name,
-                                data_dir=self.data_dir,
-                                split=self.split)
+        data = load_dataset(self.path,
+                            dataset_name,
+                            data_dir=self.data_dir,
+                            split=self.split)
         return data
 
     def get_dataset_info(self, dataset_name):
@@ -472,8 +394,9 @@ class LongBenchManager(DatasetManager):
                                           skip_special_tokens=True)
 
             # in fewshot learning and code completion we do not need chat template
-            if datasets_category[task] is None or not any(x in datasets_category[task]
-                       for x in ["Few-Shot Learning", "Code Completion"]):
+            if datasets_category[task] is None or not any(
+                    x in datasets_category[task]
+                    for x in ["Few-Shot Learning", "Code Completion"]):
                 encoded = apply_chat_template(prompt, tokenizer)
 
             else:
@@ -511,7 +434,8 @@ class InfiniteBenchManager(DatasetManager):
         return datasets
 
     def get_data(self, dataset_name):
-        return load_processed_infinitebench_dataset(self.data_dir, dataset_name)
+        return load_processed_infinitebench_dataset(self.data_dir,
+                                                    dataset_name)
 
     def get_dataset_info(self, dataset_name):
         return (
@@ -534,43 +458,38 @@ class InfiniteBenchManager(DatasetManager):
         for it, index in enumerate(indices):
             prompt_template = datasets_prompt[task]
             if task == "kv_retrieval":
-                prompt = prompt_template.format(
-                    input=data["input"][it],
-                    context=data["context"][it],
-                    key=data["key"][it])
+                prompt = prompt_template.format(input=data["input"][it],
+                                                context=data["context"][it],
+                                                key=data["key"][it])
             elif task == "longbook_choice_eng":
-                prompt = prompt_template.format(
-                    input=data["input"][it],
-                    context=data["context"][it],
-                    OPTION_A=data["OPTION_A"][it],
-                    OPTION_B=data["OPTION_B"][it],
-                    OPTION_C=data["OPTION_C"][it],
-                    OPTION_D=data["OPTION_D"][it])
-            elif task in ["longbook_sum_eng", "math_calc",
-                          "longdialogue_qa_eng"]:
-                prompt = prompt_template.format(
-                    context=data["context"][it])
+                prompt = prompt_template.format(input=data["input"][it],
+                                                context=data["context"][it],
+                                                OPTION_A=data["OPTION_A"][it],
+                                                OPTION_B=data["OPTION_B"][it],
+                                                OPTION_C=data["OPTION_C"][it],
+                                                OPTION_D=data["OPTION_D"][it])
+            elif task in [
+                    "longbook_sum_eng", "math_calc", "longdialogue_qa_eng"
+            ]:
+                prompt = prompt_template.format(context=data["context"][it])
             elif task == "math_find":
-                prompt = prompt_template.format(
-                    input=data["input"][it],
-                    context=data["context"][it],
-                    prefix=data["prefix"][it])
+                prompt = prompt_template.format(input=data["input"][it],
+                                                context=data["context"][it],
+                                                prefix=data["prefix"][it])
             elif task == "code_run":
                 prompt = prompt_template.format(
                     context=data["context"][it],
                     func=data["func"][it],
                     func_call=data["func_call"][it])
             elif task == "code_debug":
-                prompt = prompt_template.format(
-                    context=data["context"][it],
-                    OPTION_A=data["OPTION_A"][it],
-                    OPTION_B=data["OPTION_B"][it],
-                    OPTION_C=data["OPTION_C"][it],
-                    OPTION_D=data["OPTION_D"][it])
+                prompt = prompt_template.format(context=data["context"][it],
+                                                OPTION_A=data["OPTION_A"][it],
+                                                OPTION_B=data["OPTION_B"][it],
+                                                OPTION_C=data["OPTION_C"][it],
+                                                OPTION_D=data["OPTION_D"][it])
             else:
-                prompt = prompt_template.format(
-                    input=data["input"][it],
-                    context=data["context"][it])
+                prompt = prompt_template.format(input=data["input"][it],
+                                                context=data["context"][it])
 
             if truncate_from_middle:
                 tokenized_prompt = tokenizer.encode(prompt)
@@ -586,12 +505,74 @@ class InfiniteBenchManager(DatasetManager):
                                           skip_special_tokens=True)
 
             # in fewshot learning and code completion we do not need chat template
-            if datasets_category[task] is None or not any(x in datasets_category[task]
-                       for x in ["Few-Shot Learning", "Code Completion"]):
+            if datasets_category[task] is None or not any(
+                    x in datasets_category[task]
+                    for x in ["Few-Shot Learning", "Code Completion"]):
                 encoded = apply_chat_template(prompt, tokenizer)
 
             else:
                 encoded = tokenizer(prompt)
+
+            outputs["input_ids"].append(encoded["input_ids"])
+            outputs["attention_mask"].append(encoded["attention_mask"])
+            outputs["index"].append(index)
+
+        return outputs
+
+
+class NIAHManager(DatasetManager):
+
+    def __init__(self, path, data_dir):
+        super().__init__(path, data_dir)
+
+    @staticmethod
+    def get_dataset_names():
+        datasets = [
+            "niah",
+        ]
+        return datasets
+
+    def get_data(self, dataset_name):
+        return load_niah_dataset(self.data_dir, "niah")
+
+    def get_dataset_info(self, dataset_name):
+        return (
+            datasets_prompt[dataset_name],
+            datasets_maxlen[dataset_name],
+            datasets_category[dataset_name],
+        )
+
+    @staticmethod
+    def process_raw_data(
+        data,
+        indices,
+        tokenizer,
+        apply_chat_template,
+        task,
+        max_length=3500,
+        truncate_from_middle=True,
+    ):
+        outputs = {"input_ids": [], "attention_mask": [], "index": []}
+        for it, index in enumerate(indices):
+            prompt_template = datasets_prompt[task]
+            prompt = prompt_template.format(key=data["key"][it],
+                                            context=data["context"][it],
+                                            input=data["input"][it])
+
+            if truncate_from_middle:
+                tokenized_prompt = tokenizer.encode(prompt)
+                if len(tokenized_prompt) > max_length:
+                    half = int(max_length / 2)
+                    prompt = tokenizer.decode(
+                        tokenized_prompt[:half],
+                        skip_special_tokens=True) + tokenizer.decode(
+                            tokenized_prompt[-half:], skip_special_tokens=True)
+            else:
+                tokenized_prompt = tokenizer.encode(prompt)
+                prompt = tokenizer.decode(tokenized_prompt[-max_length:],
+                                          skip_special_tokens=True)
+
+            encoded = tokenizer(prompt)
 
             outputs["input_ids"].append(encoded["input_ids"])
             outputs["attention_mask"].append(encoded["attention_mask"])

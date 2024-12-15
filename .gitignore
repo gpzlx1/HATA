@@ -10,3 +10,6 @@ __pycache__
 3rdparty/rmm
 3rdparty/raft
 3rdparty/spdlog
+*.jsonl
+*.pdf
+tasks/preds

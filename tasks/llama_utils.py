@@ -3,6 +3,7 @@ import torch
 from transformers import AutoConfig, AutoTokenizer, AutoModelForCausalLM
 from fastchat.model import get_conversation_template
 from transformers.generation.configuration_utils import GenerationConfig
+import os
 
 
 def longchat_appy_chat_template(prompt, tokenizer):
@@ -62,10 +63,9 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
     elif method == "hash":
         generate_config = {
             "max_gpu_cache_memory": 25 * 1024 * 1024 * 1024,
-            "hash_rbits": 128,
-            "hash_weights_path":
-            "/root/workspace/myoffloading/KVOffloading/model_weights/longchat-7b-v1.5-32k-128",
-            "sparse_ratio": 0.1,
+            "hash_rbits": int(os.environ["RBIT"]),
+            "hash_weights_path": os.environ["HASH_WEIGHTS_PATH"],
+            "sparse_ratio": float(os.environ["TOPK_RATIO"]),
         }
         model_config._attn_implementation = "sdpa"
         from myTransformer.models.modeling_llama_hash import CustomLlamaForCausalLM
