@@ -3,7 +3,7 @@ project(KVLib LANGUAGES CUDA CXX)
 
 # find python
 find_package(Python 3.6 COMPONENTS Interpreter Development REQUIRED)
-set(PYTHON_INTERP python)
+set(PYTHON_INTERP /root/workspace/kvclus/myTransformer/venv/local/bin/python3)
 message(STATUS "Using Python interpreter: ${PYTHON_INTERP}")
 
 # find CUDA
@@ -74,3 +74,4 @@ target_compile_features(KVLib PRIVATE cxx_std_17)
 
 # Link against LibTorch
 target_link_libraries(KVLib PRIVATE ${KVLib_EXTERNAL_LIB})
+target_link_libraries(KVLib PRIVATE cuda)
