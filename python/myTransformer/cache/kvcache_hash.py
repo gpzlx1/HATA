@@ -216,14 +216,12 @@ class HashStaticCache(CustomStaticCache):
                                            self.hash_dim)
         past_key_hash_cache = self.layer_hash_caches[
             layer_idx][:, :self.layer_hash_seq_lens[layer_idx], :, :]
-        hamming_dist = KVLib.hamming_distance(past_key_hash_cache,
-                                              encoded_query)
-        score = hash_score_process(
-            hamming_dist,
-            self.layer_norm_caches[layer_idx]
-            [:, :self.layer_hash_seq_lens[layer_idx], :],
-            self.hash_rbits,
-        )
+        past_key_norm_cache = self.layer_norm_caches[
+            layer_idx][:, :self.layer_hash_seq_lens[layer_idx], :]
+        score = KVLib.hamming_score(past_key_hash_cache, encoded_query,
+                                    past_key_norm_cache, self.hash_rbits)
+        # score = KVLib.hamming_distance(past_key_hash_cache, encoded_query)
+        # score = score.transpose(-1, -2).contiguous()
         torch.cuda.nvtx.range_pop()
 
         torch.cuda.nvtx.range_push("compute topk")
