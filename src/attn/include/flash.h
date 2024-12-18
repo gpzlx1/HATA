@@ -152,6 +152,7 @@ struct Flash_fwd_params : public Qkv_params {
   int gather_idx_head_stride;
   int seqlen_gather;
   int seqlen_gather_rounded;
+  int num_heads_gather;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

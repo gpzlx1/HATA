@@ -268,10 +268,12 @@ std::tuple<at::Tensor, at::Tensor> set_params_splitkv(
 }
 
 void set_params_gather(Flash_fwd_params &params, const at::Tensor idx,
+                       const int num_heads_gather,
                        const int seqlen_gather_rounded) {
   params.gather_idx_ptr = idx.data_ptr();
   params.gather_idx_batch_stride = idx.stride(0);
   params.gather_idx_head_stride = idx.stride(1);
+  params.num_heads_gather = num_heads_gather;
   params.seqlen_gather = idx.size(2);
   params.seqlen_gather_rounded = seqlen_gather_rounded;
 }
@@ -283,7 +285,7 @@ at::Tensor mha_index_decode_fwd(
                             // round_multiple(head_size, 8)
     const at::Tensor &v,    // batch_size x seqlen_k x num_heads_k x
                             // round_multiple(head_size, 8)
-    const at::Tensor &idx,  // batch_size x num_heads x seqlen_gather
+    const at::Tensor &idx,  // batch_size x num_heads[_k] x seqlen_gather
     const float softmax_scale) {
   auto dprops = at::cuda::getCurrentDeviceProperties();
   bool is_sm8x = dprops->major == 8 && dprops->minor >= 0;
@@ -320,7 +322,9 @@ at::Tensor mha_index_decode_fwd(
   const int head_size = sizes[3];
   const int seqlen_k = k.size(1);
   const int num_heads_k = k.size(2);
+  const int num_heads_gather = idx.size(1);
   const int seqlen_gather = idx.size(2);
+
   TORCH_CHECK(batch_size > 0, "batch size must be positive");
   TORCH_CHECK(
       head_size <= 256,
@@ -335,7 +339,8 @@ at::Tensor mha_index_decode_fwd(
   // Faster to transpose q from (b, 1, (nheads_kv ngroups), d) to (b, ngroups,
   // nheads_kv, d) in this case H/t Daniel Haziza
   const int seqlenq_ngroups_swapped =
-      seqlen_q == 1 && num_heads > num_heads_k && head_size % 8 == 0;
+      seqlen_q == 1 && num_heads > num_heads_k && head_size % 8 == 0 &&
+      num_heads_gather == num_heads_k;
   const int ngroups = num_heads / num_heads_k;
   if (seqlenq_ngroups_swapped) {
     q = q.reshape({batch_size, num_heads_k, ngroups, head_size})
@@ -373,7 +378,7 @@ at::Tensor mha_index_decode_fwd(
                    nullptr, softmax_lse.data_ptr(), 0.0f, softmax_scale, -1, -1,
                    0.0f);
 
-  set_params_gather(params, idx, seqlen_gather_rounded);
+  set_params_gather(params, idx, num_heads_gather, seqlen_gather_rounded);
 
   // Keep references to these tensors to extend their lifetime
   at::Tensor softmax_lse_accum, out_accum;

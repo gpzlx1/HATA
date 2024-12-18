@@ -147,10 +147,18 @@ inline __device__ void compute_attn_1rowblock(const Params &params,
   Tensor gQ = local_tile(mQ(_, bidh, _), Shape<Int<kBlockM>, Int<kHeadDim>>{},
                          make_coord(m_block, 0));  // (kBlockM, kHeadDim)
 
-  int *gather_idx_buff =
-      reinterpret_cast<int *>(params.gather_idx_ptr) +
-      binfo.idx_offset(params.gather_idx_batch_stride,
-                       params.gather_idx_head_stride, bidb, bidh);
+  int *gather_idx_buff;
+  if (params.h == params.num_heads_gather) {
+    gather_idx_buff =
+        reinterpret_cast<int *>(params.gather_idx_ptr) +
+        binfo.idx_offset(params.gather_idx_batch_stride,
+                         params.gather_idx_head_stride, bidb, bidh);
+  } else {
+    gather_idx_buff = reinterpret_cast<int *>(params.gather_idx_ptr) +
+                      binfo.idx_offset(params.gather_idx_batch_stride,
+                                       params.gather_idx_head_stride, bidb,
+                                       bidh / params.h_h_k_ratio);
+  }
   Element *k_buff =
       reinterpret_cast<Element *>(params.k_ptr) +
       binfo.k_offset(params.k_batch_stride, params.k_row_stride,
@@ -266,8 +274,8 @@ inline __device__ void compute_attn_1rowblock(const Params &params,
                     [bidb * params.alibi_slopes_batch_stride + bidh] /
                 params.scale_softmax;
   flash::Mask<Is_causal, Is_local, Has_alibi> mask(
-      binfo.actual_seqlen_gather, binfo.actual_seqlen_q, params.window_size_left,
-      params.window_size_right, 0.0f);
+      binfo.actual_seqlen_gather, binfo.actual_seqlen_q,
+      params.window_size_left, params.window_size_right, 0.0f);
 
   // For performance reason, we separate out two kinds of iterations:
   // those that need masking on S, and those that don't.
@@ -604,10 +612,18 @@ inline __device__ void compute_attn_1rowblock_splitkv(
   Tensor gQ = local_tile(mQ(_, bidh, _), Shape<Int<kBlockM>, Int<kHeadDim>>{},
                          make_coord(m_block, 0));  // (kBlockM, kHeadDim)
 
-  int *gather_idx_buff =
-      reinterpret_cast<int *>(params.gather_idx_ptr) +
-      binfo.idx_offset(params.gather_idx_batch_stride,
-                       params.gather_idx_head_stride, bidb, bidh);
+  int *gather_idx_buff;
+  if (params.h == params.num_heads_gather) {
+    gather_idx_buff =
+        reinterpret_cast<int *>(params.gather_idx_ptr) +
+        binfo.idx_offset(params.gather_idx_batch_stride,
+                         params.gather_idx_head_stride, bidb, bidh);
+  } else {
+    gather_idx_buff = reinterpret_cast<int *>(params.gather_idx_ptr) +
+                      binfo.idx_offset(params.gather_idx_batch_stride,
+                                       params.gather_idx_head_stride, bidb,
+                                       bidh / params.h_h_k_ratio);
+  }
   Element *k_buff =
       reinterpret_cast<Element *>(params.k_ptr) +
       binfo.k_offset(params.k_batch_stride, params.k_row_stride,
