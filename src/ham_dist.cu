@@ -8,14 +8,14 @@
 namespace kvlib {
 
 template <typename T, int32_t WarpSize, int NumHead, int NumKVHead,
-          int32_t BLOCK_M, bool USE_INT64, bool USE_KEY_NORM>
+          int32_t BLOCK_M, bool USE_INT64>
 __global__ void hamming_score_kernel(
     void* __restrict__ keys_ptr, void* __restrict__ query_ptr,
     half* __restrict__ output_ptr, int32_t BSZ, int32_t SEQ, int32_t num_chunk,
     half* __restrict__ key_norms, int32_t key_code_stride0,
     int32_t key_code_stride1, int32_t key_code_stride2,
     int32_t key_norms_stride0, int32_t key_norms_stride1,
-    int32_t key_norms_stride2, int32_t rbit) {
+    int32_t key_norms_stride2, int32_t rbit, bool use_key_norm) {
   constexpr int num_kv_head = NumKVHead;
   constexpr int num_head = NumHead;
   const int tid = threadIdx.x;
@@ -71,7 +71,7 @@ __global__ void hamming_score_kernel(
       half score;
       int kv_head_id = i / kv_group;
 
-      if (USE_KEY_NORM) {
+      if (use_key_norm) {
         score =
             ((half)(1.) - half(dist * 2) / half(rbit)) * k_norm_ptr[kv_head_id];
       } else {
@@ -104,7 +104,7 @@ __global__ void hamming_score_kernel(
 torch::Tensor HammingScoreCUDA(torch::Tensor& key_codes,
                                torch::Tensor& query_code,
                                torch::Tensor& key_norms, int32_t rbit,
-                               int32_t seq_len) {
+                               int32_t seq_len, bool use_key_norm) {
   // shape for key_codes is (BATCH_SIZE, SEQ, #NUM_K_HEAD, num_chunk) and dtype
   // is int32 shape for query_code is (BATCH_SIZE, 1, #NUM_HEAD, num_chunk) and
   // dtype is int32 shape for key_norms is (BATCH_SIZE, XXX, #NUM_K_HEAD), dtype
@@ -152,25 +152,25 @@ torch::Tensor HammingScoreCUDA(torch::Tensor& key_codes,
     size_t shm_size = BLOCK_M * num_head * sizeof(half) +  // for score
                       BLOCK_M * num_head * num_chunk *
                           sizeof(int8_t);  // used to store tmp popc results
-    hamming_score_kernel<int64_t, 32, 32, 32, BLOCK_M, true, true>
+    hamming_score_kernel<int64_t, 32, 32, 32, BLOCK_M, true>
         <<<grids, blks, shm_size, stream>>>(
             key_codes.data_ptr(), query_code.data_ptr(),
             (half*)(output.data_ptr<at::Half>()), bsz, seq_len, num_chunk,
             (half*)(key_norms.data_ptr<at::Half>()), key_code_stride0,
             key_code_stride1, key_code_stride2, key_norm_stride0,
-            key_norm_stride1, key_norm_stride2, rbit);
+            key_norm_stride1, key_norm_stride2, rbit, use_key_norm);
 
   } else {
     size_t shm_size = BLOCK_M * num_head * sizeof(half) +  // for score
                       BLOCK_M * num_head * num_chunk *
                           sizeof(int8_t);  // used to store tmp popc results
-    hamming_score_kernel<int32_t, 32, 32, 32, BLOCK_M, false, true>
+    hamming_score_kernel<int32_t, 32, 32, 32, BLOCK_M, false>
         <<<grids, blks, shm_size, stream>>>(
             key_codes.data_ptr(), query_code.data_ptr(),
             (half*)(output.data_ptr<at::Half>()), bsz, seq_len, num_chunk,
             (half*)(key_norms.data_ptr<at::Half>()), key_code_stride0,
             key_code_stride1, key_code_stride2, key_norm_stride0,
-            key_norm_stride1, key_norm_stride2, rbit);
+            key_norm_stride1, key_norm_stride2, rbit, use_key_norm);
   }
 
   return output;

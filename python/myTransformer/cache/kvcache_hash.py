@@ -23,6 +23,7 @@ class HashStaticCache(CustomStaticCache):
         sparse_ratio: float = 0.1,
         num_skip_layers: int = 2,
         hash_weights_path: str = None,
+        use_norm: bool = False,
     ) -> None:
         super().__init__(config, device, dtype, max_gpu_cache_memory_size,
                          layer_device_map)
@@ -30,6 +31,7 @@ class HashStaticCache(CustomStaticCache):
         self.sparse_ratio = sparse_ratio
         self.hash_weights_path = hash_weights_path
         self.num_skip_layers = num_skip_layers
+        self.use_norm = use_norm
 
     def build_cache(self):
 
@@ -218,9 +220,9 @@ class HashStaticCache(CustomStaticCache):
                                     encoded_query,
                                     self.layer_norm_caches[layer_idx],
                                     self.hash_rbits,
-                                    self.layer_hash_seq_lens[layer_idx])
-        # score = KVLib.hamming_distance(past_key_hash_cache, encoded_query)
-        # score = score.transpose(-1, -2).contiguous()
+                                    self.layer_hash_seq_lens[layer_idx],
+                                    self.use_norm)
+        largest = True if self.use_norm else False
         torch.cuda.nvtx.range_pop()
 
         torch.cuda.nvtx.range_push("compute topk")
@@ -230,7 +232,7 @@ class HashStaticCache(CustomStaticCache):
         else:
             fetch_num = min(int(self.sparse_ratio),
                             self.layer_hash_seq_lens[layer_idx])
-        topk_indices = KVLib.batch_topk(score, fetch_num, True)
+        topk_indices = KVLib.batch_topk(score, fetch_num, largest)
         torch.cuda.nvtx.range_pop()
 
         return topk_indices
@@ -293,6 +295,7 @@ def prepare_cache_for_generation(
             layer_device_map=layer_device_map,
             sparse_ratio=generation_config.sparse_ratio,
             hash_weights_path=generation_config.hash_weights_path,
+            use_norm=generation_config.use_norm,
         )
         self._cache.build_cache()
 

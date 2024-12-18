@@ -7,18 +7,6 @@ from transformers import AutoModelForCausalLM
 import argparse
 
 
-class BinarySTE(nn.Module):
-
-    def __init__(self):
-        super(BinarySTE, self).__init__()
-
-    def forward(self, x):
-        return (x > 0).float()
-
-    def backward(self, grad_output):
-        return grad_output
-
-
 class BinaryStochastic(nn.Module):
 
     def __init__(self):
@@ -35,7 +23,7 @@ class BinaryStochastic(nn.Module):
 class MyModel(torch.nn.Module):
 
     def __init__(self, hash_weight, q_weight, k_weight, rbit, num_heads,
-                 num_kv_heads, head_dim, batch_size):
+                 num_kv_heads, head_dim, batch_size, with_norm):
         super(MyModel, self).__init__()
         self.hash_weight = hash_weight
         torch.nn.init.xavier_uniform_(self.hash_weight)
@@ -47,6 +35,7 @@ class MyModel(torch.nn.Module):
         self.gqa_size = self.num_heads // self.num_kv_heads
         self.head_dim = head_dim
         self.batch_size = batch_size
+        self.with_norm = with_norm
 
         self.bn = BinaryStochastic()
 
@@ -60,8 +49,12 @@ class MyModel(torch.nn.Module):
         k_states = k_states.expand(-1, -1, self.gqa_size,
                                    -1).reshape(-1, self.num_heads,
                                                self.head_dim)
-        attn_weights = ((q_states[:, :, None, :] @ k_states[:, :, :, None])
-                        ).view(-1) / math.sqrt(self.head_dim)
+        if self.with_norm:
+            attn_weights = ((q_states[:, :, None, :] @ k_states[:, :, :, None])
+                            ).view(-1) / math.sqrt(self.head_dim)
+        else:
+            attn_weights = torch.cosine_similarity(q_states, k_states,
+                                                   dim=-1).view(-1)
 
         q_code = ((q_states @ self.hash_weight))
         k_code = ((k_states @ self.hash_weight))
@@ -69,28 +62,33 @@ class MyModel(torch.nn.Module):
         q_code = self.bn(q_code)
         k_code = self.bn(k_code)
 
-        q_norm = q_states.norm(dim=-1)
-        k_norm = k_states.norm(dim=-1)
-
         ham_dist = ((q_code - k_code).abs().sum(dim=-1))
 
-        ham_weights = ((1 - 2 * ham_dist / rbit) * q_norm *
-                       k_norm).view(-1) / math.sqrt(self.head_dim)
+        ham_weights = (1 - 2 * ham_dist / rbit).to(q_code.dtype)
+
+        if self.with_norm:
+            q_norm = q_states.norm(dim=-1)
+            k_norm = k_states.norm(dim=-1)
+            ham_weights = (ham_weights * q_norm * k_norm) / math.sqrt(
+                self.head_dim)
+
+        ham_weights = ham_weights.view(-1)
 
         return attn_weights, ham_weights
 
 
 def train_hash_weights(
-        q_weight,
-        k_weight,
-        rbit,
-        num_heads,
-        num_kv_heads,
-        head_dim,
-        #    seq_len=1000,
-        batch_size=4000,
-        iters=4000,
-        schedule_iters=100):
+    q_weight,
+    k_weight,
+    rbit,
+    num_heads,
+    num_kv_heads,
+    head_dim,
+    with_norm=True,
+    batch_size=4000,
+    iters=4000,
+    schedule_iters=100,
+):
     dtype, device = q_weight.dtype, q_weight.device
     q_weight = q_weight.to(dtype)
     k_weight = k_weight.to(dtype)
@@ -101,7 +99,7 @@ def train_hash_weights(
                                dtype=dtype,
                                requires_grad=True)
     model = MyModel(hash_weight, q_weight, k_weight, rbit, num_heads,
-                    num_kv_heads, head_dim, batch_size)
+                    num_kv_heads, head_dim, batch_size, with_norm)
 
     loss_func = nn.MSELoss()
     # loss_func = nn.MSELoss()
@@ -148,6 +146,7 @@ if __name__ == "__main__":
     parser.add_argument("--rbit", type=int, default=256)
     parser.add_argument("--std", type=float, default=1.0)
     parser.add_argument("--save_path", type=str, default=".")
+    parser.add_argument("--with_norm", action="store_true", default=False)
 
     args = parser.parse_args()
 
@@ -180,8 +179,13 @@ if __name__ == "__main__":
         if l <= 1:
             continue
         print(f"Layer {l:2d}")
-        hash_weight = train_hash_weights(q_weights[l], k_weights[l], rbit,
-                                         num_heads, num_kv_heads, head_dim)
+        hash_weight = train_hash_weights(q_weights[l],
+                                         k_weights[l],
+                                         rbit,
+                                         num_heads,
+                                         num_kv_heads,
+                                         head_dim,
+                                         with_norm=args.with_norm)
 
         save_path = os.path.join(args.save_path,
                                  f"hash_weight_layer_{l:02d}.pt")
