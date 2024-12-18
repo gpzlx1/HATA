@@ -35,7 +35,7 @@ class my_custom_resource : public rmm::mr::device_memory_resource {
   bool supports_get_mem_info() const noexcept override { return false; }
 };
 
-torch::Tensor TopkCUDA(torch::Tensor data, int32_t k, bool largest) {
+torch::Tensor TopkCUDA(torch::Tensor& data, int32_t k, bool largest) {
   // note for data, its shape must be [batch_size, num_head, seq_len]
   // may need transpose before this function call
   CHECK(data.device().is_cuda() && data.is_contiguous());
@@ -50,23 +50,23 @@ torch::Tensor TopkCUDA(torch::Tensor data, int32_t k, bool largest) {
   auto options = torch::TensorOptions().dtype(torch::kInt32).device(device);
   cudaStream_t stream = c10::cuda::getCurrentCUDAStream(device_id);
 
-  torch::Tensor topk_values = torch::empty(
-      {batch_size, num_head, k},
-      torch::TensorOptions().dtype(data.dtype()).device(device));
+  torch::Tensor topk_values =
+      torch::empty({batch_size, num_head, k},
+                   torch::TensorOptions().dtype(data.dtype()).device(device));
   torch::Tensor topk_indices = torch::empty({batch_size, num_head, k}, options);
 
   my_custom_resource my_mr;
 
   if (data.dtype() == torch::kFloat32) {
     raft::matrix::detail::select::radix::select_k<float, int32_t, 8, 512>(
-        data.data_ptr<float>(), static_cast<int32_t*>(nullptr), total_batch_size,
-        seq_len, k, topk_values.data_ptr<float>(),
+        data.data_ptr<float>(), static_cast<int32_t*>(nullptr),
+        total_batch_size, seq_len, k, topk_values.data_ptr<float>(),
         topk_indices.data_ptr<int32_t>(), !largest, true, stream, &my_mr);
   } else {
     raft::matrix::detail::select::radix::select_k<half, int32_t, 8, 512>(
-      (half*)data.data_ptr<at::Half>(), static_cast<int32_t*>(nullptr), total_batch_size,
-      seq_len, k, (half*)topk_values.data_ptr<at::Half>(),
-      topk_indices.data_ptr<int32_t>(), !largest, true, stream, &my_mr);
+        (half*)data.data_ptr<at::Half>(), static_cast<int32_t*>(nullptr),
+        total_batch_size, seq_len, k, (half*)topk_values.data_ptr<at::Half>(),
+        topk_indices.data_ptr<int32_t>(), !largest, true, stream, &my_mr);
   }
 
   return topk_indices;

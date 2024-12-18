@@ -7,9 +7,7 @@
 namespace py = pybind11;
 
 PYBIND11_MODULE(KVLib, m) {
-  m.def("add", &kvlib::AddCUDA)
-      .def("hamming_distance", &kvlib::HammingCUDA)
-      .def("hamming_score", &kvlib::HammingScoreCUDA)
+  m.def("hamming_score", &kvlib::HammingScoreCUDA)
       .def("batch_topk", &kvlib::TopkCUDA)
       .def("encode", &kvlib::EncodeCUDA)
       .def("flash_index_decode", &mha_index_decode_fwd);

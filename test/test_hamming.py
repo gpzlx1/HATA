@@ -31,25 +31,15 @@ def torch_hamming_distance(key, query, hash_weight):
     return hamming_distance
 
 
-def my_hamming_distance(key, query, hash_weight):
+def encode(key, query, hash_weight):
     packbit_aux_tensor = torch.pow(
         2, torch.arange(0, 32, 1, dtype=torch.int32, device="cuda"))
     key_code = hash_encode(key, hash_weight, packbit_aux_tensor)
     query_code = hash_encode(query, hash_weight, packbit_aux_tensor)
-    print(key_code.shape)
-    # print(key_code)
-    # print(query_code.shape, query_code)
-    output = myTransformer.capi.hamming_distance(key_code, query_code)
-    return output, key_code, query_code
-
-
-def test_twice_hash_encode(query, hash_weight, packbit_aux_tensor):
-    hash_encode(query, hash_weight, packbit_aux_tensor)
-    hash_encode(query, hash_weight, packbit_aux_tensor)
+    return key_code, query_code
 
 
 key = torch.randn(1, 128000, 32, 128).to(torch.float16).cuda()
-
 
 query = torch.randn(1, 1, 32, 128).to(torch.float16).cuda()
 rbit = 128
@@ -62,34 +52,27 @@ hash_weight = torch.normal(
     dtype=key.dtype,
 )
 key_norms = key.norm(dim=-1)
-print(key_norms)
-# output = torch_hamming_distance(key, query, hash_weight)
-# print(output)
 
-my_output, key_code, query_code = my_hamming_distance(key, query, hash_weight)
-my_output = (1.0 - 2.0 * my_output / rbit) * key_norms
-my_output = my_output.transpose(1,2)
-print(my_output)
+torch_output = torch_hamming_distance(key, query, hash_weight)
+torch_output = (1.0 - 2.0 * torch_output / rbit) * key_norms
+torch_output = torch_output.transpose(1, 2)
+print(torch_output)
+
+key_code, query_code = encode(key, query, hash_weight)
+
 torch.cuda.synchronize()
 
+print(key_code.shape)
+print(key_code.stride())
+print(key_norms.shape)
+print(key_norms.stride())
 
-
-
-my_output2 = myTransformer.capi.hamming_score(key_code, query_code, key_norms, rbit)
-# my_output2 = my_output2 * key_norms
+my_output2 = myTransformer.capi.hamming_score(key_code, query_code, key_norms,
+                                              rbit, 128000)
 print(my_output2)
 
-print((my_output2 == my_output).all())
+print((my_output2 == torch_output).all())
 
-bench(partial(myTransformer.capi.hamming_distance, key_code, query_code))
-bench(partial(myTransformer.capi.hamming_score, key_code, query_code, key_norms, rbit))
-
-# packbit_aux_tensor = torch.pow(
-#     2, torch.arange(0, 32, 1, dtype=torch.int32, device="cuda")
-# )
-# bench(partial(test_twice_hash_encode, query, hash_weight, packbit_aux_tensor))
-
-# def test_torch_reduce(data):
-#     return data.sum(dim=-1)
-
-# bench(partial(test_torch_reduce, key))
+bench(
+    partial(myTransformer.capi.hamming_score, key_code, query_code, key_norms,
+            rbit, 128000))
