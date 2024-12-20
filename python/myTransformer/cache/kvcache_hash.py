@@ -24,6 +24,8 @@ class HashStaticCache(CustomStaticCache):
         num_skip_layers: int = 2,
         hash_weights_path: str = None,
         use_norm: bool = False,
+        num_sink: int = 0,
+        num_recent: int = 0,
     ) -> None:
         super().__init__(config, device, dtype, max_gpu_cache_memory_size,
                          layer_device_map)
@@ -32,6 +34,11 @@ class HashStaticCache(CustomStaticCache):
         self.hash_weights_path = hash_weights_path
         self.num_skip_layers = num_skip_layers
         self.use_norm = use_norm
+
+        self.num_sink = num_sink
+        self.num_recent = num_recent
+
+        self.gqa_size = self.num_heads // self.num_key_value_heads
 
     def build_cache(self):
 
@@ -180,32 +187,25 @@ class HashStaticCache(CustomStaticCache):
         key = key.view(self.curr_batch_size, -1, self.num_key_value_heads,
                        self.head_dim)
         seq_len = key.shape[1]
-        prefill_hash_encode(
-            key, self.hash_weights[layer_idx],
-            self.layer_hash_caches[layer_idx][:, :seq_len, :, :],
-            self.layer_norm_caches[layer_idx][:, :seq_len, :],
-            self.hash_packbit_aux_tensor)
+        prefill_hash_encode(key, self.hash_weights[layer_idx],
+                            self.layer_hash_caches[layer_idx],
+                            self.layer_norm_caches[layer_idx],
+                            self.hash_packbit_aux_tensor)
         self.layer_hash_seq_lens[layer_idx] += seq_len
 
     def decode_encode_hash(self, query, key, layer_idx):
         assert layer_idx >= self.num_skip_layers, f"hash topk is not enabled in layer{layer_idx}!"
-        query = query.view(self.curr_batch_size, 1, self.num_key_value_heads,
+        query = query.view(self.curr_batch_size, 1, self.num_heads,
                            self.head_dim)
         key = key.view(self.curr_batch_size, 1, self.num_key_value_heads,
                        self.head_dim)
-        decode_hash_encode(
-            key,
-            self.hash_weights[layer_idx],
-            self.layer_hash_caches[layer_idx]
-            [:, self.layer_hash_seq_lens[layer_idx]:self.
-             layer_hash_seq_lens[layer_idx] + 1, :, :],
-            self.layer_norm_caches[layer_idx]
-            [:, self.layer_hash_seq_lens[layer_idx]:self.
-             layer_hash_seq_lens[layer_idx] + 1, :],
-            query,
-            self.query_code_buffer,
-            self.hash_packbit_aux_tensor,
-        )
+
+        KVLib.decode_hash_encode(key, self.hash_weights[layer_idx],
+                                 self.layer_hash_caches[layer_idx],
+                                 self.layer_norm_caches[layer_idx], query,
+                                 self.query_code_buffer,
+                                 self.hash_packbit_aux_tensor,
+                                 self.layer_hash_seq_lens[layer_idx])
         self.layer_hash_seq_lens[layer_idx] += 1
 
         return self.query_code_buffer
@@ -222,17 +222,31 @@ class HashStaticCache(CustomStaticCache):
                                     self.hash_rbits,
                                     self.layer_hash_seq_lens[layer_idx],
                                     self.use_norm)
+        score = score.view(self.curr_batch_size, self.num_key_value_heads,
+                           self.gqa_size, -1).sum(-2)
         largest = True if self.use_norm else False
+        if self.num_sink > 0:
+            score[:, :, :self.num_sink] = torch.finfo(
+                score.dtype).max if largest else 0
+        if self.num_recent > 0:
+            score[:, :, -self.num_recent:] = torch.finfo(
+                score.dtype).max if largest else 0
         torch.cuda.nvtx.range_pop()
 
         torch.cuda.nvtx.range_push("compute topk")
         if self.sparse_ratio < 1:
-            fetch_num = int(self.layer_hash_seq_lens[layer_idx] *
-                            self.sparse_ratio)
+            fetch_num = int(
+                (self.layer_hash_seq_lens[layer_idx] - self.num_sink -
+                 self.num_recent) *
+                self.sparse_ratio) + self.num_sink + self.num_recent
         else:
-            fetch_num = min(int(self.sparse_ratio),
-                            self.layer_hash_seq_lens[layer_idx])
+            fetch_num = max(
+                min(
+                    int(self.sparse_ratio) - self.num_sink - self.num_recent,
+                    self.layer_hash_seq_lens[layer_idx]), 0)
         topk_indices = KVLib.batch_topk(score, fetch_num, largest)
+        # topk_indices = torch.topk(score, fetch_num, dim=-1,
+        #                           largest=largest).indices.int()
         torch.cuda.nvtx.range_pop()
 
         return topk_indices
@@ -296,6 +310,8 @@ def prepare_cache_for_generation(
             sparse_ratio=generation_config.sparse_ratio,
             hash_weights_path=generation_config.hash_weights_path,
             use_norm=generation_config.use_norm,
+            num_sink=generation_config.num_sink,
+            num_recent=generation_config.num_recent,
         )
         self._cache.build_cache()
 

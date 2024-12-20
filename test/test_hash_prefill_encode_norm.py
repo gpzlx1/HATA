@@ -47,11 +47,11 @@ def torch_hash_encode(data: torch.Tensor, hash_weight: torch.Tensor,
     return packbit_key_code, key_states.norm(dim=-1)
 
 
-torch.cuda.set_device(7)
+torch.cuda.set_device(1)
 torch.manual_seed(42)
 
-BSZ = 1
-SEQ = 2000
+BSZ = 10
+SEQ = 8000
 HEAD = 32
 HEAD_DIM = 128
 RBIT = 256
@@ -79,22 +79,21 @@ triton_norm = torch.empty((BSZ, SEQ * 2, HEAD),
 
 torch_output, torch_norm = torch_hash_encode(key_states, hash_weight,
                                              packbit_aux_tensor)
-prefill_hash_encode(key_states, hash_weight, triton_output[:, :SEQ, :, :],
-                    triton_norm[:, :SEQ, :], packbit_aux_tensor)
+prefill_hash_encode(key_states, hash_weight, triton_output, triton_norm,
+                    packbit_aux_tensor)
 
-print(torch_output)
-print(triton_output[:, :SEQ, :, :])
+# print(torch_output)
+# print(triton_output[:, :SEQ, :, :])
 
-print(torch_norm)
-print(triton_norm[:, :SEQ, :])
+# print(torch_norm)
+# print(triton_norm[:, :SEQ, :])
 
 assert (torch_output == triton_output[:, :SEQ, :, :]).all()
 print(torch.abs(torch_norm - triton_norm[:, :SEQ, :]).max())
 
 bench(partial(torch_hash_encode, key_states, hash_weight, packbit_aux_tensor))
 bench(
-    partial(prefill_hash_encode, key_states, hash_weight,
-            triton_output[:, :SEQ, :, :], triton_norm[:, :SEQ, :],
-            packbit_aux_tensor))
+    partial(prefill_hash_encode, key_states, hash_weight, triton_output,
+            triton_norm, packbit_aux_tensor))
 bench(partial(hash_encode, key_states, hash_weight, packbit_aux_tensor))
 bench(partial(matmul, key_states, hash_weight))

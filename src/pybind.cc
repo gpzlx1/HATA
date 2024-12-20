@@ -11,6 +11,6 @@ PYBIND11_MODULE(KVLib, m) {
         py::arg("query_code"), py::arg("key_norm"), py::arg("rbit"),
         py::arg("seq_len"), py::arg("use_key_norm") = false)
       .def("batch_topk", &kvlib::TopkCUDA)
-      .def("encode", &kvlib::EncodeCUDA)
-      .def("flash_index_decode", &mha_index_decode_fwd);
+      .def("flash_index_decode", &mha_index_decode_fwd)
+      .def("decode_hash_encode", &kvlib::decode_hash_encode);
 }

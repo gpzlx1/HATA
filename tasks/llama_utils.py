@@ -38,6 +38,7 @@ def llama3_apply_chat_template(prompt, tokenizer):
 
 def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
     model_config = AutoConfig.from_pretrained(model_name_or_path)
+    model_config.torch_dtype = torch.float16
     generate_kwarg = {}
 
     method = args.method.lower()
@@ -62,11 +63,13 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
 
     elif method == "hash":
         generate_config = {
-            "max_gpu_cache_memory": 20 * 1024 * 1024 * 1024,
+            "max_gpu_cache_memory": 18 * 1024 * 1024 * 1024,
             "hash_rbits": int(os.environ["RBIT"]),
             "hash_weights_path": os.environ["HASH_WEIGHTS_PATH"],
             "sparse_ratio": float(os.environ["TOPK_RATIO"]),
             "use_norm": int(os.environ["USE_NORM"]) > 0,
+            "num_sink": int(os.environ["NUM_SINK"]),
+            "num_recent": int(os.environ["NUM_RECENT"])
         }
         model_config._attn_implementation = "sdpa"
         from myTransformer.models.modeling_llama_hash import CustomLlamaForCausalLM
@@ -128,6 +131,7 @@ def comm_generate(x, generate_kwarg, model, tokenizer):
     output = model.generate(**x, do_sample=False, **generate_kwarg)
 
     output = output[:, input_length:]
+
     preds = tokenizer.batch_decode(output, skip_special_tokens=True)
 
     return preds

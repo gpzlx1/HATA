@@ -1,0 +1,56 @@
+#!/bin/bash
+
+############################### compile for decode_hash_encode ###############################
+python3 -m triton.tools.compile \
+     -n "_decode_hash_encode" \
+     -w 4 \
+     -ns 1 \
+     -on "_decode_hash_encode_rbit128_dim128_kernel" \
+     -o "decode_hash_encode_rbit128_dim128" \
+     -s "*fp16,i64, *fp16,i64, *fp16,*i32, *i32,i64, *fp16,i64, *i32,i64, i32,i32,i32,i32, 128,128,16" \
+     -g 4,1,4 ./python/myTransformer/cache/kernels/triton_hash_encode.py
+
+sleep 3
+mv decode_hash_encode_rbit128_dim128*.c ./src/decode_hash_encode_rbit128_dim128.c
+mv decode_hash_encode_rbit128_dim128*.h ./src/decode_hash_encode_rbit128_dim128.h
+
+python3 -m triton.tools.compile \
+     -n "_decode_hash_encode" \
+     -w 4 \
+     -ns 1 \
+     -on "_decode_hash_encode_rbit256_dim128_kernel" \
+     -o "decode_hash_encode_rbit256_dim128" \
+     -s "*fp16,i64, *fp16,i64, *fp16,*i32, *i32,i64, *fp16,i64, *i32,i64, i32,i32,i32,i32, 256,128,16" \
+     -g 4,1,8 ./python/myTransformer/cache/kernels/triton_hash_encode.py
+
+sleep 3
+mv decode_hash_encode_rbit256_dim128*.c ./src/decode_hash_encode_rbit256_dim128.c
+mv decode_hash_encode_rbit256_dim128*.h ./src/decode_hash_encode_rbit256_dim128.h
+
+
+############################### compile for prefill_hash_encode ###############################
+# python3 -m triton.tools.compile \
+#      -n "_prefill_hash_encode" \
+#      -w 4 \
+#      -ns 2 \
+#      -on "_prefill_hash_encode_rbit128_dim128_kernel" \
+#      -o "prefill_hash_encode_rbit128_dim128" \
+#      -s "*fp16,i64, *fp16,*i32, *i32,i64, *fp16,i64, i32,i32, 128,128,128" \
+#      -g 2500,1,1 ./python/myTransformer/cache/kernels/triton_hash_encode.py
+
+# sleep 3
+# mv prefill_hash_encode_rbit128_dim128*.c ./src/prefill_hash_encode_rbit128_dim128.c
+# mv prefill_hash_encode_rbit128_dim128*.h ./src/prefill_hash_encode_rbit128_dim128.h
+
+# python3 -m triton.tools.compile \
+#      -n "_prefill_hash_encode" \
+#      -w 4 \
+#      -ns 2 \
+#      -on "_prefill_hash_encode_rbit256_dim128_kernel" \
+#      -o "prefill_hash_encode_rbit256_dim128" \
+#      -s "*fp16,i64, *fp16,*i32, *i32,i64, *fp16,i64, i32,i32, 256,128,128" \
+#      -g 2500,1,1 ./python/myTransformer/cache/kernels/triton_hash_encode.py
+
+# sleep 3
+# mv prefill_hash_encode_rbit256_dim128*.c ./src/prefill_hash_encode_rbit256_dim128.c
+# mv prefill_hash_encode_rbit256_dim128*.h ./src/prefill_hash_encode_rbit256_dim128.h

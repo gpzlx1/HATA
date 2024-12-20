@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15.0)
-project(KVLib LANGUAGES CUDA CXX)
+project(KVLib LANGUAGES CUDA CXX C)
 
 # find python
 find_package(Python 3.6 COMPONENTS Interpreter Development REQUIRED)
@@ -7,7 +7,7 @@ set(PYTHON_INTERP /root/workspace/kvclus/myTransformer/venv/local/bin/python3)
 message(STATUS "Using Python interpreter: ${PYTHON_INTERP}")
 
 # find CUDA
-find_package(CUDA REQUIRED)
+find_package(CUDAToolkit REQUIRED)
 include(FindCUDA/select_compute_arch)
 CUDA_DETECT_INSTALLED_GPUS(INSTALLED_GPU_ARCH)
 set(TORCH_CUDA_ARCH_LIST "${INSTALLED_GPU_ARCH}")
@@ -54,6 +54,7 @@ message(STATUS "Build with OpenMP")
 # Define our library target
 # include_directories(src)
 file(GLOB KVLib_SRC
+  src/*.c
   src/*.cc
   src/*.cu
   src/attn/*.cu

@@ -97,9 +97,10 @@ class CustomStaticCache(Cache):
         hidden_size = value_weightsT.shape[0]
         hidden_states = hidden_states.view(self.curr_batch_size, -1,
                                            hidden_size)
+        kv_hidden_size = value_weightsT.shape[1]
         q_len = hidden_states.shape[1]
         self.layer_caches[layer_idx] = self.layer_caches[layer_idx].view(
-            2, self.curr_batch_size, -1, hidden_size)
+            2, self.curr_batch_size, -1, kv_hidden_size)
         torch.matmul(
             hidden_states,
             value_weightsT,
