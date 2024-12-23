@@ -29,9 +29,10 @@ using namespace cute;
 template <typename Kernel_traits, bool Is_dropout, bool Is_causal,
           bool Is_local, bool Has_alibi, bool Is_even_MN, bool Is_even_K,
           bool Is_softcap, bool Return_softmax, typename Params>
-inline __device__ void compute_attn_1rowblock(const Params &params,
-                                              const int bidb, const int bidh,
-                                              const int m_block) {
+inline __device__ void compute_gather_attn_1rowblock(const Params &params,
+                                                     const int bidb,
+                                                     const int bidh,
+                                                     const int m_block) {
   using Element = typename Kernel_traits::Element;
   using ElementAccum = typename Kernel_traits::ElementAccum;
   using index_t = typename Kernel_traits::index_t;
@@ -53,14 +54,14 @@ inline __device__ void compute_attn_1rowblock(const Params &params,
   const int n_block_min =
       !Is_local
           ? 0
-          : std::max(0, (m_block * kBlockM + binfo.actual_seqlen_k -
+          : std::max(0, (m_block * kBlockM + binfo.actual_seqlen_gather -
                          binfo.actual_seqlen_q - params.window_size_left) /
                             kBlockN);
-  int n_block_max = cute::ceil_div(binfo.actual_seqlen_k, kBlockN);
+  int n_block_max = cute::ceil_div(binfo.actual_seqlen_gather, kBlockN);
   if (Is_causal || Is_local) {
     n_block_max = std::min(
         n_block_max,
-        cute::ceil_div((m_block + 1) * kBlockM + binfo.actual_seqlen_k -
+        cute::ceil_div((m_block + 1) * kBlockM + binfo.actual_seqlen_gather -
                            binfo.actual_seqlen_q + params.window_size_right,
                        kBlockN));
   }
@@ -120,24 +121,27 @@ inline __device__ void compute_attn_1rowblock(const Params &params,
                   make_stride(params.q_row_stride, params.q_head_stride, _1{}));
   Tensor gQ = local_tile(mQ(_, bidh, _), Shape<Int<kBlockM>, Int<kHeadDim>>{},
                          make_coord(m_block, 0));  // (kBlockM, kHeadDim)
-  Tensor mK =
-      make_tensor(make_gmem_ptr(reinterpret_cast<Element *>(params.k_ptr) +
-                                binfo.k_offset(params.k_batch_stride,
-                                               params.k_row_stride, bidb)),
-                  make_shape(binfo.actual_seqlen_k, params.h_k, params.d),
-                  make_stride(params.k_row_stride, params.k_head_stride, _1{}));
-  Tensor gK = local_tile(mK(_, bidh / params.h_h_k_ratio, _),
-                         Shape<Int<kBlockN>, Int<kHeadDim>>{},
-                         make_coord(_, 0));  // (kBlockN, kHeadDim, nblocksN)
-  Tensor mV =
-      make_tensor(make_gmem_ptr(reinterpret_cast<Element *>(params.v_ptr) +
-                                binfo.k_offset(params.v_batch_stride,
-                                               params.v_row_stride, bidb)),
-                  make_shape(binfo.actual_seqlen_k, params.h_k, params.d),
-                  make_stride(params.v_row_stride, params.v_head_stride, _1{}));
-  Tensor gV = local_tile(mV(_, bidh / params.h_h_k_ratio, _),
-                         Shape<Int<kBlockN>, Int<kHeadDim>>{},
-                         make_coord(_, 0));  // (kBlockN, kHeadDim, nblocksN)
+
+  int *gather_idx_buff;
+  if (params.h == params.num_heads_gather) {
+    gather_idx_buff =
+        reinterpret_cast<int *>(params.gather_idx_ptr) +
+        binfo.idx_offset(params.gather_idx_batch_stride,
+                         params.gather_idx_head_stride, bidb, bidh);
+  } else {
+    gather_idx_buff = reinterpret_cast<int *>(params.gather_idx_ptr) +
+                      binfo.idx_offset(params.gather_idx_batch_stride,
+                                       params.gather_idx_head_stride, bidb,
+                                       bidh / params.h_h_k_ratio);
+  }
+  Element *k_buff =
+      reinterpret_cast<Element *>(params.k_ptr) +
+      binfo.k_offset(params.k_batch_stride, params.k_row_stride,
+                     params.k_head_stride, bidb, bidh / params.h_h_k_ratio);
+  Element *v_buff =
+      reinterpret_cast<Element *>(params.v_ptr) +
+      binfo.k_offset(params.v_batch_stride, params.v_row_stride,
+                     params.v_head_stride, bidb, bidh / params.h_h_k_ratio);
 
   Tensor sQ = make_tensor(make_smem_ptr(reinterpret_cast<Element *>(smem_)),
                           typename Kernel_traits::SmemLayoutQ{});
@@ -156,11 +160,8 @@ inline __device__ void compute_attn_1rowblock(const Params &params,
 
   Tensor tQgQ = gmem_thr_copy_QKV.partition_S(gQ);
   Tensor tQsQ = gmem_thr_copy_QKV.partition_D(sQ);
-  Tensor tKgK =
-      gmem_thr_copy_QKV.partition_S(gK);  // (KCPY, KCPY_N, KCPY_K, nblocksN)
+
   Tensor tKsK = gmem_thr_copy_QKV.partition_D(sK);
-  Tensor tVgV =
-      gmem_thr_copy_QKV.partition_S(gV);  // (VCPY, VCPY_N, VCPY_K, nblocksN)
   Tensor tVsV = gmem_thr_copy_QKV.partition_D(sV);
 
   typename Kernel_traits::TiledMma tiled_mma;
@@ -199,18 +200,13 @@ inline __device__ void compute_attn_1rowblock(const Params &params,
   // Construct identity layout for sQ and sK
   Tensor cQ = make_identity_tensor(
       make_shape(size<0>(sQ), size<1>(sQ)));  // (BLK_M,BLK_K) -> (blk_m,blk_k)
-  Tensor cKV = make_identity_tensor(
-      make_shape(size<0>(sK), size<1>(sK)));  // (BLK_N,BLK_K) -> (blk_n,blk_k)
 
   // Repeat the partitioning with identity layouts
   Tensor tQcQ = gmem_thr_copy_QKV.partition_S(
       cQ);  // (ACPY,ACPY_M,ACPY_K) -> (blk_m,blk_k)
-  Tensor tKVcKV = gmem_thr_copy_QKV.partition_S(
-      cKV);  // (BCPY,BCPY_N,BCPY_K) -> (blk_n,blk_k)
 
   // Allocate predicate tensors for k
   Tensor tQpQ = make_tensor<bool>(make_shape(size<2>(tQsQ)));
-  Tensor tKVpKV = make_tensor<bool>(make_shape(size<2>(tKsK)));
 
   // Set predicates for k bounds
   if (!Is_even_K) {
@@ -218,13 +214,11 @@ inline __device__ void compute_attn_1rowblock(const Params &params,
     for (int k = 0; k < size(tQpQ); ++k) {
       tQpQ(k) = get<1>(tQcQ(0, 0, k)) < params.d;
     }
-#pragma unroll
-    for (int k = 0; k < size(tKVpKV); ++k) {
-      tKVpKV(k) = get<1>(tKVcKV(0, 0, k)) < params.d;
-    }
   }
 
+  //
   // Prologue
+  //
 
   // We don't need to clear the sQ smem tiles since we'll only write out the
   // valid outputs
@@ -237,11 +231,11 @@ inline __device__ void compute_attn_1rowblock(const Params &params,
   // Moreover, iterating in reverse might save us 1 register (we just need
   // n_block instead of both n_block and n_block_max).
   int n_block = n_block_max - 1;
-  // We don't need to clear the sK smem tiles since we'll mask out the scores
-  // anyway.
-  flash::copy<Is_even_MN, Is_even_K>(
-      gmem_tiled_copy_QKV, tKgK(_, _, _, n_block), tKsK, tKVcKV, tKVpKV,
-      binfo.actual_seqlen_k - n_block * kBlockN);
+
+  flash::gather_g2s_copy<Kernel_traits>(
+      gmem_tiled_copy_QKV, params, tKsK, k_buff, gather_idx_buff,
+      params.k_row_stride, n_block, tidx,
+      binfo.actual_seqlen_gather - n_block * kBlockN);
   cute::cp_async_fence();
 
   clear(acc_o);
@@ -255,8 +249,8 @@ inline __device__ void compute_attn_1rowblock(const Params &params,
                     [bidb * params.alibi_slopes_batch_stride + bidh] /
                 params.scale_softmax;
   flash::Mask<Is_causal, Is_local, Has_alibi> mask(
-      binfo.actual_seqlen_k, binfo.actual_seqlen_q, params.window_size_left,
-      params.window_size_right, 0.0f);
+      binfo.actual_seqlen_gather, binfo.actual_seqlen_q,
+      params.window_size_left, params.window_size_right, 0.0f);
 
   // For performance reason, we separate out two kinds of iterations:
   // those that need masking on S, and those that don't.
@@ -284,13 +278,14 @@ inline __device__ void compute_attn_1rowblock(const Params &params,
 
     // Advance gV
     if (masking_step > 0) {
-      flash::copy</*Is_even_MN=*/true, Is_even_K>(
-          gmem_tiled_copy_QKV, tVgV(_, _, _, n_block), tVsV, tKVcKV, tKVpKV);
+      flash::gather_g2s_copy<Kernel_traits>(gmem_tiled_copy_QKV, params, tVsV,
+                                            v_buff, gather_idx_buff,
+                                            params.v_row_stride, n_block, tidx);
     } else {
-      // Clear the smem tiles to account for predicated off loads
-      flash::copy<Is_even_MN, Is_even_K, /*Clear_OOB_MN=*/true>(
-          gmem_tiled_copy_QKV, tVgV(_, _, _, n_block), tVsV, tKVcKV, tKVpKV,
-          binfo.actual_seqlen_k - n_block * kBlockN);
+      flash::gather_g2s_copy<Kernel_traits>(
+          gmem_tiled_copy_QKV, params, tVsV, v_buff, gather_idx_buff,
+          params.v_row_stride, n_block, tidx,
+          binfo.actual_seqlen_gather - n_block * kBlockN);
     }
     cute::cp_async_fence();
 
@@ -306,10 +301,11 @@ inline __device__ void compute_attn_1rowblock(const Params &params,
 
     flash::cp_async_wait<0>();
     __syncthreads();
+
     if (n_block > n_block_min) {
-      flash::copy</*Is_even_MN=*/true, Is_even_K>(gmem_tiled_copy_QKV,
-                                                  tKgK(_, _, _, n_block - 1),
-                                                  tKsK, tKVcKV, tKVpKV);
+      flash::gather_g2s_copy<Kernel_traits>(
+          gmem_tiled_copy_QKV, params, tKsK, k_buff, gather_idx_buff,
+          params.k_row_stride, n_block - 1, tidx);
       // This cp_async_fence needs to be in the if block, otherwise the
       // synchronization isn't right and we get race conditions.
       cute::cp_async_fence();
@@ -349,8 +345,10 @@ inline __device__ void compute_attn_1rowblock(const Params &params,
     clear(acc_s);
     flash::cp_async_wait<0>();
     __syncthreads();
-    flash::copy</*Is_even_MN=*/true, Is_even_K>(
-        gmem_tiled_copy_QKV, tVgV(_, _, _, n_block), tVsV, tKVcKV, tKVpKV);
+
+    flash::gather_g2s_copy<Kernel_traits>(gmem_tiled_copy_QKV, params, tVsV,
+                                          v_buff, gather_idx_buff,
+                                          params.v_row_stride, n_block, tidx);
     cute::cp_async_fence();
 
     flash::gemm(acc_s, tSrQ, tSrK, tSsQ, tSsK, tiled_mma, smem_tiled_copy_Q,
@@ -362,9 +360,9 @@ inline __device__ void compute_attn_1rowblock(const Params &params,
     flash::cp_async_wait<0>();
     __syncthreads();
     if (n_block > n_block_min) {
-      flash::copy</*Is_even_MN=*/true, Is_even_K>(gmem_tiled_copy_QKV,
-                                                  tKgK(_, _, _, n_block - 1),
-                                                  tKsK, tKVcKV, tKVpKV);
+      flash::gather_g2s_copy<Kernel_traits>(
+          gmem_tiled_copy_QKV, params, tKsK, k_buff, gather_idx_buff,
+          params.k_row_stride, n_block - 1, tidx);
       // This cp_async_fence needs to be in the if block, otherwise the
       // synchronization isn't right and we get race conditions.
       cute::cp_async_fence();
@@ -472,7 +470,7 @@ inline __device__ void compute_attn_1rowblock(const Params &params,
 template <typename Kernel_traits, bool Is_causal, bool Is_local, bool Has_alibi,
           bool Is_even_MN, bool Is_even_K, bool Is_softcap, bool Split,
           bool Append_KV, typename Params>
-inline __device__ void compute_attn_1rowblock_splitkv(
+inline __device__ void compute_gather_attn_1rowblock_splitkv(
     const Params &params, const int bidb, const int bidh, const int m_block,
     const int n_split_idx, const int num_n_splits) {
   using Element = typename Kernel_traits::Element;
@@ -500,23 +498,25 @@ inline __device__ void compute_attn_1rowblock_splitkv(
   if (m_block * kBlockM >= binfo.actual_seqlen_q) return;
 
   const int n_blocks_per_split =
-      ((params.seqlen_k + kBlockN - 1) / kBlockN + num_n_splits - 1) /
+      ((params.seqlen_gather + kBlockN - 1) / kBlockN + num_n_splits - 1) /
       num_n_splits;
   const int n_block_min =
       !Is_local ? n_split_idx * n_blocks_per_split
                 : std::max(n_split_idx * n_blocks_per_split,
-                           (m_block * kBlockM + binfo.actual_seqlen_k -
+                           (m_block * kBlockM + binfo.actual_seqlen_gather -
                             binfo.actual_seqlen_q - params.window_size_left) /
                                kBlockN);
-  int n_block_max = std::min(cute::ceil_div(binfo.actual_seqlen_k, kBlockN),
-                             (n_split_idx + 1) * n_blocks_per_split);
+  int n_block_max =
+      std::min(cute::ceil_div(binfo.actual_seqlen_gather, kBlockN),
+               (n_split_idx + 1) * n_blocks_per_split);
   if (Is_causal || Is_local) {
     n_block_max = std::min(
         n_block_max,
-        cute::ceil_div((m_block + 1) * kBlockM + binfo.actual_seqlen_k -
+        cute::ceil_div((m_block + 1) * kBlockM + binfo.actual_seqlen_gather -
                            binfo.actual_seqlen_q + params.window_size_right,
                        kBlockN));
   }
+
   if (n_block_min >=
       n_block_max) {  // This also covers the case where n_block_max <= 0
     // We exit early and write 0 to gOaccum and -inf to gLSEaccum.
@@ -587,25 +587,26 @@ inline __device__ void compute_attn_1rowblock_splitkv(
   Tensor gQ = local_tile(mQ(_, bidh, _), Shape<Int<kBlockM>, Int<kHeadDim>>{},
                          make_coord(m_block, 0));  // (kBlockM, kHeadDim)
 
-  Tensor mK = make_tensor(
-      make_gmem_ptr(reinterpret_cast<Element *>(params.k_ptr) +
-                    binfo.k_offset(params.k_batch_stride, params.k_row_stride,
-                                   params.k_head_stride, bidb,
-                                   bidh / params.h_h_k_ratio)),
-      make_shape(binfo.actual_seqlen_k, params.d),
-      make_stride(params.k_row_stride, _1{}));
-  Tensor gK = local_tile(mK, Shape<Int<kBlockN>, Int<kHeadDim>>{},
-                         make_coord(_, 0));  // (kBlockN, kHeadDim, nblocksN)
-
-  Tensor mV = make_tensor(
-      make_gmem_ptr(reinterpret_cast<Element *>(params.v_ptr) +
-                    binfo.k_offset(params.v_batch_stride, params.v_row_stride,
-                                   params.v_head_stride, bidb,
-                                   bidh / params.h_h_k_ratio)),
-      make_shape(binfo.actual_seqlen_k, params.d),
-      make_stride(params.v_row_stride, _1{}));
-  Tensor gV = local_tile(mV, Shape<Int<kBlockN>, Int<kHeadDim>>{},
-                         make_coord(_, 0));  // (kBlockN, kHeadDim, nblocksN)
+  int *gather_idx_buff;
+  if (params.h == params.num_heads_gather) {
+    gather_idx_buff =
+        reinterpret_cast<int *>(params.gather_idx_ptr) +
+        binfo.idx_offset(params.gather_idx_batch_stride,
+                         params.gather_idx_head_stride, bidb, bidh);
+  } else {
+    gather_idx_buff = reinterpret_cast<int *>(params.gather_idx_ptr) +
+                      binfo.idx_offset(params.gather_idx_batch_stride,
+                                       params.gather_idx_head_stride, bidb,
+                                       bidh / params.h_h_k_ratio);
+  }
+  Element *k_buff =
+      reinterpret_cast<Element *>(params.k_ptr) +
+      binfo.k_offset(params.k_batch_stride, params.k_row_stride,
+                     params.k_head_stride, bidb, bidh / params.h_h_k_ratio);
+  Element *v_buff =
+      reinterpret_cast<Element *>(params.v_ptr) +
+      binfo.k_offset(params.v_batch_stride, params.v_row_stride,
+                     params.v_head_stride, bidb, bidh / params.h_h_k_ratio);
 
   Tensor sQ = make_tensor(make_smem_ptr(reinterpret_cast<Element *>(smem_)),
                           typename Kernel_traits::SmemLayoutQ{});
@@ -624,11 +625,8 @@ inline __device__ void compute_attn_1rowblock_splitkv(
 
   Tensor tQgQ = gmem_thr_copy_QKV.partition_S(gQ);
   Tensor tQsQ = gmem_thr_copy_QKV.partition_D(sQ);
-  Tensor tKgK =
-      gmem_thr_copy_QKV.partition_S(gK);  // (KCPY, KCPY_N, KCPY_K, n_blocks)
+
   Tensor tKsK = gmem_thr_copy_QKV.partition_D(sK);
-  Tensor tVgV =
-      gmem_thr_copy_QKV.partition_S(gV);  // (VCPY, VCPY_N, VCPY_K, n_blocks)
   Tensor tVsV = gmem_thr_copy_QKV.partition_D(sV);
 
   typename Kernel_traits::TiledMma tiled_mma;
@@ -665,18 +663,13 @@ inline __device__ void compute_attn_1rowblock_splitkv(
   // Construct identity layout for sQ and sK
   Tensor cQ = make_identity_tensor(
       make_shape(size<0>(sQ), size<1>(sQ)));  // (BLK_M,BLK_K) -> (blk_m,blk_k)
-  Tensor cKV = make_identity_tensor(
-      make_shape(size<0>(sK), size<1>(sK)));  // (BLK_N,BLK_K) -> (blk_n,blk_k)
 
   // Repeat the partitioning with identity layouts
   Tensor tQcQ = gmem_thr_copy_QKV.partition_S(
       cQ);  // (ACPY,ACPY_M,ACPY_K) -> (blk_m,blk_k)
-  Tensor tKVcKV = gmem_thr_copy_QKV.partition_S(
-      cKV);  // (BCPY,BCPY_N,BCPY_K) -> (blk_n,blk_k)
 
   // Allocate predicate tensors for k
   Tensor tQpQ = make_tensor<bool>(make_shape(size<2>(tQsQ)));
-  Tensor tKVpKV = make_tensor<bool>(make_shape(size<2>(tKsK)));
 
   // Set predicates for k bounds
   if (!Is_even_K) {
@@ -684,12 +677,7 @@ inline __device__ void compute_attn_1rowblock_splitkv(
     for (int k = 0; k < size(tQpQ); ++k) {
       tQpQ(k) = get<1>(tQcQ(0, 0, k)) < params.d;
     }
-#pragma unroll
-    for (int k = 0; k < size(tKVpKV); ++k) {
-      tKVpKV(k) = get<1>(tKVcKV(0, 0, k)) < params.d;
-    }
   }
-
   // Prologue
 
   // We don't need to clear the sQ smem tiles since we'll only write out the
@@ -704,11 +692,10 @@ inline __device__ void compute_attn_1rowblock_splitkv(
   // n_block instead of both n_block and n_block_max).
   int n_block = n_block_max - 1;
 
-  // We don't need to clear the sK smem tiles since we'll mask out the scores
-  // anyway.
-  flash::copy<Is_even_MN, Is_even_K>(
-      gmem_tiled_copy_QKV, tKgK(_, _, _, n_block), tKsK, tKVcKV, tKVpKV,
-      binfo.actual_seqlen_k - n_block * kBlockN);
+  flash::gather_g2s_copy<Kernel_traits>(
+      gmem_tiled_copy_QKV, params, tKsK, k_buff, gather_idx_buff,
+      params.k_row_stride, n_block, tidx,
+      binfo.actual_seqlen_gather - n_block * kBlockN);
   cute::cp_async_fence();
 
   clear(acc_o);
@@ -721,8 +708,8 @@ inline __device__ void compute_attn_1rowblock_splitkv(
                            [bidb * params.alibi_slopes_batch_stride + bidh] /
                        params.scale_softmax;
   flash::Mask<Is_causal, Is_local, Has_alibi> mask(
-      binfo.actual_seqlen_k, binfo.actual_seqlen_q, params.window_size_left,
-      params.window_size_right, alibi_slope);
+      binfo.actual_seqlen_gather, binfo.actual_seqlen_q,
+      params.window_size_left, params.window_size_right, alibi_slope);
 
   // For performance reason, we separate out two kinds of iterations:
   // those that need masking on S, and those that don't.
@@ -749,10 +736,16 @@ inline __device__ void compute_attn_1rowblock_splitkv(
     __syncthreads();
 
     // Advance gV
-
-    flash::copy<Is_even_MN, Is_even_K, /*Clear_OOB_MN=*/true>(
-        gmem_tiled_copy_QKV, tVgV(_, _, _, n_block), tVsV, tKVcKV, tKVpKV,
-        binfo.actual_seqlen_k - n_block * kBlockN);
+    if (masking_step > 0) {
+      flash::gather_g2s_copy<Kernel_traits>(gmem_tiled_copy_QKV, params, tVsV,
+                                            v_buff, gather_idx_buff,
+                                            params.v_row_stride, n_block, tidx);
+    } else {
+      flash::gather_g2s_copy<Kernel_traits>(
+          gmem_tiled_copy_QKV, params, tVsV, v_buff, gather_idx_buff,
+          params.v_row_stride, n_block, tidx,
+          binfo.actual_seqlen_gather - n_block * kBlockN);
+    }
 
     cute::cp_async_fence();
 
@@ -771,9 +764,9 @@ inline __device__ void compute_attn_1rowblock_splitkv(
     __syncthreads();
 
     if (n_block > n_block_min) {
-      flash::copy</*Is_even_MN=*/true, Is_even_K>(gmem_tiled_copy_QKV,
-                                                  tKgK(_, _, _, n_block - 1),
-                                                  tKsK, tKVcKV, tKVpKV);
+      flash::gather_g2s_copy<Kernel_traits>(
+          gmem_tiled_copy_QKV, params, tKsK, k_buff, gather_idx_buff,
+          params.k_row_stride, n_block - 1, tidx);
       // This cp_async_fence needs to be in the if block, otherwise the
       // synchronization isn't right and we get race conditions.
       cute::cp_async_fence();
@@ -820,8 +813,9 @@ inline __device__ void compute_attn_1rowblock_splitkv(
     flash::cp_async_wait<0>();
     __syncthreads();
 
-    flash::copy</*Is_even_MN=*/true, Is_even_K>(
-        gmem_tiled_copy_QKV, tVgV(_, _, _, n_block), tVsV, tKVcKV, tKVpKV);
+    flash::gather_g2s_copy<Kernel_traits>(gmem_tiled_copy_QKV, params, tVsV,
+                                          v_buff, gather_idx_buff,
+                                          params.v_row_stride, n_block, tidx);
     cute::cp_async_fence();
 
     flash::gemm(acc_s, tSrQ, tSrK, tSsQ, tSsK, tiled_mma, smem_tiled_copy_Q,
@@ -833,9 +827,9 @@ inline __device__ void compute_attn_1rowblock_splitkv(
     flash::cp_async_wait<0>();
     __syncthreads();
     if (n_block > n_block_min) {
-      flash::copy</*Is_even_MN=*/true, Is_even_K>(gmem_tiled_copy_QKV,
-                                                  tKgK(_, _, _, n_block - 1),
-                                                  tKsK, tKVcKV, tKVpKV);
+      flash::gather_g2s_copy<Kernel_traits>(
+          gmem_tiled_copy_QKV, params, tKsK, k_buff, gather_idx_buff,
+          params.k_row_stride, n_block - 1, tidx);
       // This cp_async_fence needs to be in the if block, otherwise the
       // synchronization isn't right and we get race conditions.
       cute::cp_async_fence();
@@ -972,16 +966,17 @@ inline __device__ void compute_attn_1rowblock_splitkv(
 template <typename Kernel_traits, bool Is_dropout, bool Is_causal,
           bool Is_local, bool Has_alibi, bool Is_even_MN, bool Is_even_K,
           bool Is_softcap, bool Return_softmax, typename Params>
-inline __device__ void compute_attn(const Params &params) {
+inline __device__ void compute_gather_attn(const Params &params) {
   const int m_block = blockIdx.x;
   // The block index for the batch.
   const int bidb = blockIdx.y;
   // The block index for the head.
   const int bidh = blockIdx.z;
 
-  flash::compute_attn_1rowblock<Kernel_traits, Is_dropout, Is_causal, Is_local,
-                                Has_alibi, Is_even_MN, Is_even_K, Is_softcap,
-                                Return_softmax>(params, bidb, bidh, m_block);
+  flash::compute_gather_attn_1rowblock<Kernel_traits, Is_dropout, Is_causal,
+                                       Is_local, Has_alibi, Is_even_MN,
+                                       Is_even_K, Is_softcap, Return_softmax>(
+      params, bidb, bidh, m_block);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -989,7 +984,7 @@ inline __device__ void compute_attn(const Params &params) {
 template <typename Kernel_traits, bool Is_causal, bool Is_local, bool Has_alibi,
           bool Is_even_MN, bool Is_even_K, bool Is_softcap, bool Split,
           bool Append_KV, typename Params>
-inline __device__ void compute_attn_splitkv(const Params &params) {
+inline __device__ void compute_gather_attn_splitkv(const Params &params) {
   const int m_block = blockIdx.x;
   // The block index for the batch.
   const int bidb = Split ? blockIdx.z / params.h : blockIdx.y;
@@ -997,10 +992,10 @@ inline __device__ void compute_attn_splitkv(const Params &params) {
   const int bidh = Split ? blockIdx.z - bidb * params.h : blockIdx.z;
   const int n_split_idx = Split ? blockIdx.y : 0;
   const int num_n_splits = Split ? gridDim.y : 1;
-  flash::compute_attn_1rowblock_splitkv<Kernel_traits, Is_causal, Is_local,
-                                        Has_alibi, Is_even_MN, Is_even_K,
-                                        Is_softcap, Split, Append_KV>(
-      params, bidb, bidh, m_block, n_split_idx, num_n_splits);
+  flash::compute_gather_attn_1rowblock_splitkv<
+      Kernel_traits, Is_causal, Is_local, Has_alibi, Is_even_MN, Is_even_K,
+      Is_softcap, Split, Append_KV>(params, bidb, bidh, m_block, n_split_idx,
+                                    num_n_splits);
 }
 
 }  // namespace flash

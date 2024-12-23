@@ -20,7 +20,9 @@ def bench(func):
         func()
     torch.cuda.synchronize()
     t1 = time.time()
-    print((t1 - t0) * 1000 / 100)
+    latency = (t1 - t0) / 100
+    print(latency * 1000)
+    return latency
 
 
 def torch_hamming_distance(key, query, hash_weight):
@@ -45,13 +47,14 @@ def encode(key, query, hash_weight):
     return key_code, query_code
 
 
+b = 2
 rbit = 128
 h = 32
 hk = 8
 gqa = h // hk
 s = 128000
-key = torch.randn(1, s, hk, 128).to(torch.float16).cuda()
-query = torch.randn(1, 1, h, 128).to(torch.float16).cuda()
+key = torch.randn(b, s, hk, 128).to(torch.float16).cuda()
+query = torch.randn(b, 1, h, 128).to(torch.float16).cuda()
 
 hash_weight = torch.normal(
     0,
@@ -61,33 +64,43 @@ hash_weight = torch.normal(
     dtype=key.dtype,
 )
 key_norms = key.norm(dim=-1)
-key_norms_expand = key_norms.view(1, s, hk, 1).expand(1, s, hk,
-                                                      gqa).reshape(1, s, h)
+key_norms_expand = key_norms.view(b, s, hk, 1).expand(b, s, hk,
+                                                      gqa).reshape(b, s, h)
 
 torch_output = torch_hamming_distance(key, query, hash_weight)
 torch_output = (1.0 - 2.0 * torch_output / rbit) * key_norms_expand
-torch_output = torch_output.transpose(1, 2)
+torch_output = torch_output.transpose(1, 2).view(b, hk, gqa, -1).sum(2)
 print(torch_output)
+print(torch_output.shape)
 
 key_code, query_code = encode(key, query, hash_weight)
 
 torch.cuda.synchronize()
 
-# print(key_code.shape)
-# print(key_code.stride())
-# print(key_norms.shape)
-# print(key_norms.stride())
-
 my_output2 = myTransformer.capi.hamming_score(key_code,
                                               query_code,
                                               key_norms,
                                               rbit,
-                                              128000,
+                                              s,
                                               use_key_norm=True)
 print(my_output2)
+print(my_output2.shape)
 
-print((my_output2 == torch_output).all())
+print((my_output2 - torch_output).abs().max())
 
-bench(
-    partial(myTransformer.capi.hamming_score, key_code, query_code, key_norms,
-            rbit, 128000))
+latency = bench(
+    partial(myTransformer.capi.hamming_score,
+            key_code,
+            query_code,
+            key_norms,
+            rbit,
+            s,
+            use_key_norm=True))
+
+size = key_code.numel() * key_code.dtype.itemsize + query_code.numel(
+) * query_code.dtype.itemsize + key_norms.numel(
+) * key_norms.dtype.itemsize + my_output2.numel() * my_output2.dtype.itemsize
+bandwidth = size / 1024 / 1024 / 1024 / latency
+print(
+    f"Data: {size / 1024 / 1024 / 1024:.3f} GB Bandwidth: {bandwidth:.3f} GB/sec"
+)

@@ -14,7 +14,7 @@ from typing import Optional, Tuple, Union
 from transformers.modeling_outputs import BaseModelOutputWithPast
 
 from ..cache.kvcache_hash import HashStaticCache, prepare_cache_for_generation
-from .utils import SiLUAndMul
+from .utils import SiLUAndMul, flash_attnention
 import flashinfer
 from transformers.modeling_flash_attention_utils import _flash_attention_forward
 import KVLib
@@ -132,6 +132,8 @@ class CustomLlamaAttention(LlamaFlashAttention2):
         q_len = past_key_value.get_cur_q_len()
         _, hidden_size = hidden_states.size()
 
+        is_prefill = q_len > 1
+
         query_states = self.q_proj(hidden_states)
         query_states = query_states.view(-1, self.num_heads, self.head_dim)
 
@@ -139,16 +141,7 @@ class CustomLlamaAttention(LlamaFlashAttention2):
         key_states = key_states.view(-1, self.num_key_value_heads,
                                      self.head_dim)
 
-        if batch_size == 1:
-            value_states = past_key_value.value_proj_and_append(
-                hidden_states,
-                self.v_proj.weight.T,
-                self.layer_idx,
-                inc_seq_len=False)
-        else:
-            value_states = self.v_proj(hidden_states)
-            value_states = value_states.view(-1, self.num_key_value_heads,
-                                             self.head_dim)
+        value_states = self.v_proj(hidden_states)
 
         torch.cuda.nvtx.range_pop()
 
@@ -157,45 +150,21 @@ class CustomLlamaAttention(LlamaFlashAttention2):
                                                    past_key_value)
         torch.cuda.nvtx.range_pop()
 
-        if self.layer_idx >= past_key_value.get_num_skip_layers():
-            torch.cuda.nvtx.range_push("hash encode")
-            if q_len > 1:
-                past_key_value.prefill_encode_hash(key_states, self.layer_idx)
-            else:
-                encoded_query = past_key_value.decode_encode_hash(
-                    query_states, key_states, self.layer_idx)
-            torch.cuda.nvtx.range_pop()
-
-        torch.cuda.nvtx.range_push("kvcache append")
-        if batch_size > 1:
-            value_states = past_key_value.append(value_states,
-                                                 self.layer_idx,
-                                                 type="value",
-                                                 inc_seq_len=False)
-        key_states = past_key_value.append(key_states,
-                                           self.layer_idx,
-                                           type="key",
-                                           inc_seq_len=True)
-        torch.cuda.nvtx.range_pop()
-
         query_states = query_states.view(batch_size, -1, self.num_heads,
                                          self.head_dim)
+        key_states = key_states.view(batch_size, -1, self.num_key_value_heads,
+                                     self.head_dim)
+        value_states = value_states.view(batch_size, -1,
+                                         self.num_key_value_heads,
+                                         self.head_dim)
 
-        if self.layer_idx >= past_key_value.get_num_skip_layers(
-        ) and q_len == 1:
-            torch.cuda.nvtx.range_push("hash topk")
-            topk_indices = past_key_value.compute_topk(encoded_query,
-                                                       self.layer_idx)
-            torch.cuda.nvtx.range_pop()
+        if is_prefill:
+            past_key_value.append_prefill(key_states, value_states,
+                                          self.layer_idx)
 
-            torch.cuda.nvtx.range_push("hash attn")
-            attn_output = KVLib.flash_index_decode(query_states, key_states,
-                                                   value_states, topk_indices,
-                                                   self.sacle)
-            torch.cuda.nvtx.range_pop()
+            if self.layer_idx >= past_key_value.get_num_skip_layers():
+                past_key_value.prefill_encode_hash(self.layer_idx)
 
-        else:
-            torch.cuda.nvtx.range_push("attn")
             attn_output = _flash_attention_forward(
                 query_states,
                 key_states,
@@ -208,11 +177,66 @@ class CustomLlamaAttention(LlamaFlashAttention2):
                 use_top_left_mask=self._flash_attn_uses_top_left_mask,
                 is_causal=self.is_causal,
             )
+        else:
+            (
+                middle_key_states,
+                middle_value_states,
+                middle_cache_len,
+            ) = past_key_value.get_middle_cache(self.layer_idx)
+
+            if self.layer_idx >= past_key_value.get_num_skip_layers():
+                torch.cuda.nvtx.range_push("hash encode")
+                encoded_query = past_key_value.decode_encode_hash(
+                    query_states, self.layer_idx)
+                torch.cuda.nvtx.range_pop()
+
+                torch.cuda.nvtx.range_push("hash select")
+                topk_indices = past_key_value.compute_topk(
+                    encoded_query, self.layer_idx)
+                torch.cuda.nvtx.range_pop()
+
+                torch.cuda.nvtx.range_push("middle attention")
+                middle_attn_output, middle_lse = KVLib.flash_index_decode(
+                    query_states, middle_key_states, middle_value_states,
+                    topk_indices, self.sacle)
+                torch.cuda.nvtx.range_pop()
+
+            else:
+                torch.cuda.nvtx.range_push("middle attention")
+                middle_attn_output, middle_lse = KVLib.flash_decode(
+                    query_states, middle_key_states, middle_value_states,
+                    self.sacle, middle_cache_len)
+                torch.cuda.nvtx.range_pop()
+
+            torch.cuda.nvtx.range_push("kvcache append")
+            past_key_value.append_decode(key_states, value_states,
+                                         self.layer_idx)
+            torch.cuda.nvtx.range_pop()
+
+            torch.cuda.nvtx.range_push("sink-recent attention")
+            sink_recent_key_states, sink_recent_value_states = past_key_value.get_sink_recent_cache(
+                self.layer_idx)
+            sink_recent_attn_output, sink_recent_lse = flash_attnention(
+                query_states, sink_recent_key_states, sink_recent_value_states,
+                self.sacle)
+            torch.cuda.nvtx.range_pop()
+
+            torch.cuda.nvtx.range_push("combine attention")
+            attn_output = KVLib.combine_attention(
+                middle_attn_output,
+                middle_lse,
+                sink_recent_attn_output,
+                sink_recent_lse,
+            )
             torch.cuda.nvtx.range_pop()
 
         torch.cuda.nvtx.range_push("output proj")
         attn_output = attn_output.view(-1, hidden_size)
         attn_output = self.o_proj(attn_output)
+        torch.cuda.nvtx.range_pop()
+
+        torch.cuda.nvtx.range_push("append middle")
+        past_key_value.advance_recent_window(self.layer_idx)
         torch.cuda.nvtx.range_pop()
 
         return attn_output, None, past_key_value

@@ -10,6 +10,8 @@
 #include "cutlass/cutlass.h"
 #include "cutlass/layout/layout.h"
 
+namespace kvlib {
+
 using namespace cute;
 
 template <int kHeadDim_, int kBlockM_, int kBlockN_, int kNWarps_,
@@ -342,3 +344,5 @@ struct Flash_bwd_kernel_traits : public Base {
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+
+}  // namespace kvlib

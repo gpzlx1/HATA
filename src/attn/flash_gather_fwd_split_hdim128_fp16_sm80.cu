@@ -6,7 +6,7 @@
 
 namespace kvlib {
 
-template void run_mha_fwd_splitkv_dispatch<cutlass::half_t, 128, false>(
+template void run_mha_gather_fwd_splitkv_dispatch<cutlass::half_t, 128, false>(
     Flash_fwd_params &params, cudaStream_t stream);
 
 }

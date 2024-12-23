@@ -15,6 +15,8 @@
 
 #include <ATen/cuda/CUDAGraphsUtils.cuh>  // For at::cuda::philox::unpack
 
+namespace kvlib {
+
 constexpr int TOTAL_DIM = 0;
 constexpr int H_DIM = 1;
 constexpr int D_DIM = 2;
@@ -158,7 +160,17 @@ struct Flash_fwd_params : public Qkv_params {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 template <typename T, int Headdim, bool Is_causal>
+void run_mha_gather_fwd_(Flash_fwd_params &params, cudaStream_t stream);
+template <typename T, int Headdim, bool Is_causal>
+void run_mha_gather_fwd_splitkv_dispatch(Flash_fwd_params &params,
+                                         cudaStream_t stream);
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+template <typename T, int Headdim, bool Is_causal>
 void run_mha_fwd_(Flash_fwd_params &params, cudaStream_t stream);
 template <typename T, int Headdim, bool Is_causal>
 void run_mha_fwd_splitkv_dispatch(Flash_fwd_params &params,
                                   cudaStream_t stream);
+
+}  // namespace kvlib

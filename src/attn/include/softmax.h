@@ -12,6 +12,7 @@
 
 #include "utils.h"
 
+namespace kvlib {
 namespace flash {
 
 using namespace cute;
@@ -222,3 +223,4 @@ struct Softmax {
 };
 
 }  // namespace flash
+}  // namespace kvlib

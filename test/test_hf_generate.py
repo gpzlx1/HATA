@@ -38,7 +38,7 @@ dataset = Dataset.from_list(dataset)
 
 if __name__ == "__main__":
     # i = int(sys.argv[1])
-    device = "cuda:1"
+    device = "cuda:7"
     torch.cuda.set_device(device)
     torch.manual_seed(42)
 
@@ -51,6 +51,7 @@ if __name__ == "__main__":
     from myTransformer.models.modeling_llama_hash import CustomLlamaForCausalLM
 
     config = AutoConfig.from_pretrained(model_path)
+    config.torch_dtype = torch.float16
     config._attn_implementation = "flash_attention_2"
     model = CustomLlamaForCausalLM.from_pretrained(model_path,
                                                    torch_dtype=torch.float16,
@@ -60,32 +61,41 @@ if __name__ == "__main__":
     model = model.eval().to(device)
 
     generation_kwargs = {
-        "max_gpu_cache_memory": 21474836480,  # 30GB
+        "max_gpu_cache_memory": 22212254720,  # 30GB
         "page_num": 1000,
         "page_size": 16,
-        "hash_rbits": 256,
+        "hash_rbits": 128,
         "hash_weights_path":
-        None,
-        "sparse_ratio": 0.1,
+        "/root/workspace/myoffloading/model_weights/longchat-7b-v1.5-32k-128",
+        # "/root/workspace/myoffloading/model_weights/Meta-Llama-3.1-8B-Instruct-128",
+        "sparse_ratio": 0.03,
+        "use_norm": True,
+        "num_sink": 64,
+        "num_recent": 32,
     }
     generation_config = GenerationConfig(**generation_kwargs)
 
     it = 0
 
     for ctx in dataset:
+
         prompt = dataset_prompt.format(context=ctx["context"],
                                        input=ctx["input"])
-        # messages = [{"role": "user", "content": f"{prompt}"}]
-        # prompt = tokenizer.apply_chat_template(
-        #     messages, add_generation_prompt=True, tokenize=True, return_tensors="pt"
-        # )
-        # prompt = prompt.to(model.device)
 
+        # # llama3.1
+        # messages = [{"role": "user", "content": f"{prompt}"}]
+        # prompt = tokenizer.apply_chat_template(messages,
+        #                                        add_generation_prompt=True,
+        #                                        tokenize=False)
+
+        # longchat
         conv = get_conversation_template("vicuna")
         conv.append_message(conv.roles[0], prompt)
         conv.append_message(conv.roles[1], None)
         prompt = conv.get_prompt()
+
         encoded = tokenizer(prompt, return_tensors="pt")
+
         input_ids = encoded.input_ids.to(model.device)
         attention_mask = encoded.attention_mask.to(model.device)
 

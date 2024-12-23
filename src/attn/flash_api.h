@@ -19,6 +19,10 @@
   TORCH_CHECK(x.sizes() == torch::IntArrayRef({__VA_ARGS__}), \
               #x " must have shape (" #__VA_ARGS__ ")")
 
+namespace kvlib {
+
+//////////////////////////////////////////////////////////////////////////////////
+
 void set_params_fprop(Flash_fwd_params &params,
                       // sizes
                       const size_t b, const size_t seqlen_q,
@@ -151,38 +155,6 @@ void set_params_fprop(Flash_fwd_params &params,
   params.seqlenq_ngroups_swapped = seqlenq_ngroups_swapped;
 }
 
-void run_mha_fwd(Flash_fwd_params &params, cudaStream_t stream,
-                 bool force_split_kernel = false) {
-  // FP16_SWITCH(!params.is_bf16, [&] {
-  //   HEADDIM_SWITCH(params.d, [&] {
-  //     BOOL_SWITCH(params.is_causal, Is_causal, [&] {
-  //       if (params.num_splits <= 1 &&
-  //           !force_split_kernel) {  // If we don't set it num_splits == 0
-  //         run_mha_fwd_<elem_type, kHeadDim, Is_causal>(params, stream);
-  //       } else {
-  //         run_mha_fwd_splitkv_dispatch<elem_type, kHeadDim,
-  //         Is_causal>(params,
-  //                                                                      stream);
-  //       }
-  //     });
-  //   });
-  // });
-  if (params.num_splits <= 1 &&
-      !force_split_kernel) {  // If we don't set it num_splits == 0
-    // printf("non-split\n");
-    run_mha_fwd_<cutlass::half_t, 128, false>(params, stream);
-  } else {
-    // printf("split\n");
-    run_mha_fwd_splitkv_dispatch<cutlass::half_t, 128, false>(params, stream);
-  }
-}
-
-// Find the number of splits that maximizes the occupancy. For example, if we
-// have batch * n_heads = 48 and we have 108 SMs, having 2 splits (efficiency =
-// 0.89) is better than having 3 splits (efficiency = 0.67). However, we also
-// don't want too many splits as that would incur more HBM reads/writes. So we
-// find the best efficiency, then find the smallest number of splits that gets
-// 85% of the best efficiency.
 inline int num_splits_heuristic(int batch_nheads_mblocks, int num_SMs,
                                 int num_n_blocks, int max_splits) {
   // If we have enough to almost fill the SMs, then just use 1 split
@@ -208,7 +180,6 @@ inline int num_splits_heuristic(int batch_nheads_mblocks, int num_SMs,
     } else {
       float n_waves = float(batch_nheads_mblocks * num_splits) / num_SMs;
       float eff = n_waves / ceil(n_waves);
-      // printf("num_splits = %d, eff = %f\n", num_splits, eff);
       if (eff > max_efficiency) {
         max_efficiency = eff;
       }
@@ -220,7 +191,6 @@ inline int num_splits_heuristic(int batch_nheads_mblocks, int num_SMs,
       continue;
     }
     if (efficiency[num_splits - 1] >= 0.85 * max_efficiency) {
-      // printf("num_splits chosen = %d\n", num_splits);
       return num_splits;
     }
   }
@@ -278,7 +248,20 @@ void set_params_gather(Flash_fwd_params &params, const at::Tensor idx,
   params.seqlen_gather_rounded = seqlen_gather_rounded;
 }
 
-at::Tensor mha_index_decode_fwd(
+//////////////////////////////////////////////////////////////////////////////////
+
+void run_mha_gather_fwd(Flash_fwd_params &params, cudaStream_t stream,
+                        bool force_split_kernel = false) {
+  if (params.num_splits <= 1 &&
+      !force_split_kernel) {  // If we don't set it num_splits == 0
+    run_mha_gather_fwd_<cutlass::half_t, 128, false>(params, stream);
+  } else {
+    run_mha_gather_fwd_splitkv_dispatch<cutlass::half_t, 128, false>(params,
+                                                                     stream);
+  }
+}
+
+std::vector<at::Tensor> mha_index_decode_fwd(
     at::Tensor
         &q,  // batch_size x seqlen_q x num_heads x round_multiple(head_size, 8)
     const at::Tensor &k,    // batch_size x seqlen_k x num_heads_k x
@@ -388,6 +371,99 @@ at::Tensor mha_index_decode_fwd(
 
   if (seqlen_gather > 0) {
     auto stream = at::cuda::getCurrentCUDAStream().stream();
+    run_mha_gather_fwd(params, stream);
+  } else {
+    out.zero_();
+  }
+
+  if (seqlenq_ngroups_swapped) {
+    out = out.transpose(1, 2).reshape(
+        {batch_size, 1, num_heads_k * seqlen_q, head_size});
+    q = q.transpose(1, 2).reshape(
+        {batch_size, 1, num_heads_k * seqlen_q, head_size});
+    softmax_lse = softmax_lse.reshape({batch_size, num_heads_k * seqlen_q, 1});
+  }
+  return {out, softmax_lse};
+}
+
+//////////////////////////////////////////////////////////////////////////////////
+
+void run_mha_fwd(Flash_fwd_params &params, cudaStream_t stream,
+                 bool force_split_kernel = false) {
+  if (params.num_splits <= 1 &&
+      !force_split_kernel) {  // If we don't set it num_splits == 0
+    run_mha_fwd_<cutlass::half_t, 128, false>(params, stream);
+  } else {
+    run_mha_fwd_splitkv_dispatch<cutlass::half_t, 128, false>(params, stream);
+  }
+}
+
+std::vector<at::Tensor> mha_decode_fwd(
+    at::Tensor
+        &q,  // batch_size x seqlen_q x num_heads x round_multiple(head_size, 8)
+    const at::Tensor &k,  // batch_size x ? x num_heads_k x
+                          // round_multiple(head_size, 8)
+    const at::Tensor &v,  // batch_size x ? x num_heads_k x
+                          // round_multiple(head_size, 8)
+    const float softmax_scale, const int32_t seqlen_k) {
+  auto dprops = at::cuda::getCurrentDeviceProperties();
+
+  CHECK_DEVICE(q);
+  CHECK_DEVICE(k);
+  CHECK_DEVICE(v);
+
+  const auto sizes = q.sizes();
+
+  const int batch_size = sizes[0];
+  int seqlen_q = sizes[1];
+  int num_heads = sizes[2];
+  const int head_size = sizes[3];
+  const int num_heads_k = k.size(2);
+
+  // Faster to transpose q from (b, 1, (nheads_kv ngroups), d) to (b, ngroups,
+  // nheads_kv, d) in this case H/t Daniel Haziza
+  const int seqlenq_ngroups_swapped =
+      seqlen_q == 1 && num_heads > num_heads_k && head_size % 8 == 0;
+  const int ngroups = num_heads / num_heads_k;
+  if (seqlenq_ngroups_swapped) {
+    q = q.reshape({batch_size, num_heads_k, ngroups, head_size})
+            .transpose(1, 2);
+    seqlen_q = ngroups;
+    num_heads = num_heads_k;
+  }
+
+  at::Tensor out = torch::empty_like(q);
+
+  auto round_multiple = [](int x, int m) { return (x + m - 1) / m * m; };
+  const int head_size_rounded =
+      head_size <= 192 ? round_multiple(head_size, 32) : 256;
+  const int seqlen_q_rounded = round_multiple(seqlen_q, 128);
+  const int seqlen_k_rounded = round_multiple(seqlen_k, 128);
+
+  // Otherwise the kernel will be launched from cuda:0 device
+  // Cast to char to avoid compiler warning about narrowing
+  at::cuda::CUDAGuard device_guard{(char)q.get_device()};
+
+  auto opts = q.options();
+
+  auto softmax_lse =
+      torch::empty({batch_size, num_heads, seqlen_q}, opts.dtype(at::kFloat));
+
+  Flash_fwd_params params;
+  set_params_fprop(params, batch_size, seqlen_q, seqlen_k, seqlen_q_rounded,
+                   seqlen_k_rounded, num_heads, num_heads_k, head_size,
+                   head_size_rounded, q, k, v, out, nullptr, nullptr, nullptr,
+                   nullptr, softmax_lse.data_ptr(), 0.0f, softmax_scale, -1, -1,
+                   0.0f);
+
+  // Keep references to these tensors to extend their lifetime
+  at::Tensor softmax_lse_accum, out_accum;
+  std::tie(softmax_lse_accum, out_accum) = set_params_splitkv(
+      params, batch_size, num_heads, head_size, seqlen_k, seqlen_q,
+      head_size_rounded, 0.0f, /*num_splits=*/0, dprops, opts);
+
+  if (seqlen_k > 0) {
+    auto stream = at::cuda::getCurrentCUDAStream().stream();
     run_mha_fwd(params, stream);
   } else {
     out.zero_();
@@ -398,6 +474,11 @@ at::Tensor mha_index_decode_fwd(
         {batch_size, 1, num_heads_k * seqlen_q, head_size});
     q = q.transpose(1, 2).reshape(
         {batch_size, 1, num_heads_k * seqlen_q, head_size});
+    softmax_lse = softmax_lse.reshape({batch_size, num_heads_k * seqlen_q, 1});
   }
-  return out;
+  return {out, softmax_lse};
 }
+
+//////////////////////////////////////////////////////////////////////////////////
+
+}  // namespace kvlib

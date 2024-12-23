@@ -2,8 +2,7 @@ from typing import Dict, Optional, Union, Any
 import torch
 from transformers.configuration_utils import PretrainedConfig
 from transformers.generation.configuration_utils import GenerationConfig
-from .kernels.triton_hash_encode import prefill_hash_encode, decode_hash_encode
-from .kernels.triton_score_process import hash_score_process
+from .kernels.triton_hash_encode import prefill_hash_encode
 from .kvcache_fa import CustomStaticCache
 import KVLib
 import os
@@ -26,6 +25,7 @@ class HashStaticCache(CustomStaticCache):
         use_norm: bool = False,
         num_sink: int = 0,
         num_recent: int = 0,
+        max_batch_size: int = 16,
     ) -> None:
         super().__init__(config, device, dtype, max_gpu_cache_memory_size,
                          layer_device_map)
@@ -37,6 +37,10 @@ class HashStaticCache(CustomStaticCache):
 
         self.num_sink = num_sink
         self.num_recent = num_recent
+        self.max_batch_size = max_batch_size
+        self.max_gpu_cache_memory_size -= 2 * self.num_layers * self.max_batch_size * (
+            self.num_sink + self.num_recent
+        ) * self.num_key_value_heads * self.head_dim * self.dtype.itemsize
 
         self.gqa_size = self.num_heads // self.num_key_value_heads
 
@@ -50,6 +54,8 @@ class HashStaticCache(CustomStaticCache):
 
         self.layer_norm_caches = []
         self.max_layer_norm_caches = []
+
+        self.layer_sink_recent_caches = []
 
         self.hash_weights = []
 
@@ -95,6 +101,8 @@ class HashStaticCache(CustomStaticCache):
                             dtype=self.dtype,
                             device=layer_device))
 
+            self.layer_sink_recent_caches.append(None)
+
             if l >= self.num_skip_layers:
                 self.max_layer_hash_caches.append(
                     torch.zeros((hash_numel, ),
@@ -123,6 +131,8 @@ class HashStaticCache(CustomStaticCache):
         self.curr_batch_size = 0
         self.seq_len = 0
         self.layer_hash_seq_lens = [0 for l in range(self.num_layers)]
+        self.layer_cache_lens = [0 for _ in range(self.num_layers)]
+        self.layer_recent_insert_ptr = [0 for _ in range(self.num_layers)]
 
         self.hash_packbit_aux_tensor = torch.pow(
             2,
@@ -137,7 +147,9 @@ class HashStaticCache(CustomStaticCache):
     def reset(self, batch_size):
         self.curr_batch_size = batch_size
         self.seq_len = 0
+        self.layer_cache_lens = [0 for _ in range(self.num_layers)]
         self.layer_hash_seq_lens = [0 for _ in range(self.num_layers)]
+        self.layer_recent_insert_ptr = [0 for _ in range(self.num_layers)]
 
         # shape for KVCache: (batch_size, 2, max_seq_len, num_heads * head_dim)
         kv_max_seq_len = self.each_layer_max_kv_numel // (
@@ -160,6 +172,12 @@ class HashStaticCache(CustomStaticCache):
                 2, batch_size, self.max_seq_len, self.num_key_value_heads,
                 self.head_dim)
 
+            self.layer_sink_recent_caches[i] = torch.zeros(
+                (2, batch_size, self.num_sink + self.num_recent,
+                 self.num_key_value_heads, self.head_dim),
+                device=self.layer_devices[i],
+                dtype=self.dtype)
+
             if i >= self.num_skip_layers:
                 self.layer_hash_caches[i] = self.max_layer_hash_caches[
                     i][:hash_numel]
@@ -179,26 +197,100 @@ class HashStaticCache(CustomStaticCache):
                                              dtype=torch.int32,
                                              device=self.layer_devices[0])
 
-    def get_hash_weights(self, layer_idx):
-        return self.hash_weights[layer_idx]
+    def append_prefill(self, key_states: torch.Tensor,
+                       value_states: torch.Tensor, layer_idx: int):
 
-    def prefill_encode_hash(self, key, layer_idx):
+        prefill_len = key_states.shape[1]
+
+        if layer_idx == self.num_layers - 1:
+            self.seq_len += prefill_len
+
+        # sink
+        self.layer_sink_recent_caches[layer_idx][
+            0, :, :self.num_sink, :, :] = key_states[:, :self.num_sink, :, :]
+        self.layer_sink_recent_caches[layer_idx][
+            1, :, :self.num_sink, :, :] = value_states[:, :self.num_sink, :, :]
+
+        # recent
+        self.layer_sink_recent_caches[layer_idx][
+            0, :, self.num_sink:, :, :] = key_states[:,
+                                                     -self.num_recent:, :, :]
+        self.layer_sink_recent_caches[layer_idx][
+            1, :, self.num_sink:, :, :] = value_states[:,
+                                                       -self.num_recent:, :, :]
+        self.layer_recent_insert_ptr[layer_idx] = self.num_sink
+
+        residual_num = prefill_len - self.num_sink - self.num_recent
+
+        # middle
+        self.layer_caches[layer_idx][
+            0, :, :residual_num, :, :] = key_states[:, self.num_sink:-self.
+                                                    num_recent, :, :]
+        self.layer_caches[layer_idx][
+            1, :, :residual_num, :, :] = value_states[:, self.num_sink:-self.
+                                                      num_recent, :, :]
+
+        self.layer_cache_lens[layer_idx] += residual_num
+
+    def append_decode(self, key_states: torch.Tensor,
+                      value_states: torch.Tensor, layer_idx: int):
+
+        KVLib.kvcache_append(self.layer_sink_recent_caches[layer_idx],
+                             key_states, value_states,
+                             self.layer_recent_insert_ptr[layer_idx])
+
+        self.layer_recent_insert_ptr[layer_idx] += 1
+        if self.layer_recent_insert_ptr[
+                layer_idx] == self.num_sink + self.num_recent:
+            self.layer_recent_insert_ptr[
+                layer_idx] = self.num_sink  # circular queue
+
+        if layer_idx == self.num_layers - 1:
+            self.seq_len += 1
+
+    def value_proj_and_append(self,
+                              hidden_states,
+                              value_weightsT,
+                              layer_idx,
+                              inc_seq_len=False):
+
+        hidden_size = value_weightsT.shape[0]
+        kv_hidden_size = value_weightsT.shape[1]
+        hidden_states = hidden_states.view(self.curr_batch_size, -1,
+                                           hidden_size)
+
+        insert_cache = self.layer_sink_recent_caches[layer_idx].view(
+            2, self.curr_batch_size, -1, kv_hidden_size)
+        insert_ptr = self.layer_recent_insert_ptr[layer_idx]
+        torch.matmul(hidden_states,
+                     value_weightsT,
+                     out=insert_cache[1, :, insert_ptr:insert_ptr + 1, :])
+
+        if inc_seq_len:
+            self.layer_recent_insert_ptr[layer_idx] += 1
+            if self.layer_recent_insert_ptr[
+                    layer_idx] == self.num_sink + self.num_recent:
+                self.layer_recent_insert_ptr[
+                    layer_idx] = self.num_sink  # circular queue
+
+            if layer_idx == len(self.layer_caches) - 1:
+                self.seq_len += 1
+
+    def prefill_encode_hash(self, layer_idx):
         assert layer_idx >= self.num_skip_layers, f"hash topk is not enabled in layer{layer_idx}!"
-        key = key.view(self.curr_batch_size, -1, self.num_key_value_heads,
-                       self.head_dim)
-        seq_len = key.shape[1]
+        key = self.layer_caches[layer_idx][
+            0, :, :self.layer_cache_lens[layer_idx], :, :]
         prefill_hash_encode(key, self.hash_weights[layer_idx],
                             self.layer_hash_caches[layer_idx],
                             self.layer_norm_caches[layer_idx],
                             self.hash_packbit_aux_tensor)
-        self.layer_hash_seq_lens[layer_idx] += seq_len
+        self.layer_hash_seq_lens[layer_idx] = self.layer_cache_lens[layer_idx]
 
-    def decode_encode_hash(self, query, key, layer_idx):
+    def decode_encode_hash(self, query, layer_idx):
         assert layer_idx >= self.num_skip_layers, f"hash topk is not enabled in layer{layer_idx}!"
-        query = query.view(self.curr_batch_size, 1, self.num_heads,
-                           self.head_dim)
-        key = key.view(self.curr_batch_size, 1, self.num_key_value_heads,
-                       self.head_dim)
+
+        ptr = self.layer_recent_insert_ptr[layer_idx]
+        key = self.layer_sink_recent_caches[layer_idx][0, :, ptr:ptr + 1, :, :]
 
         KVLib.decode_hash_encode(key, self.hash_weights[layer_idx],
                                  self.layer_hash_caches[layer_idx],
@@ -210,40 +302,48 @@ class HashStaticCache(CustomStaticCache):
 
         return self.query_code_buffer
 
+    def advance_recent_window(self, layer_idx):
+        cache_len = self.layer_cache_lens[layer_idx]
+        ptr = self.layer_recent_insert_ptr[layer_idx]
+        KVLib.kvcache_append2(self.layer_caches[layer_idx],
+                              self.layer_sink_recent_caches[layer_idx],
+                              cache_len, ptr)
+        self.layer_cache_lens[layer_idx] += 1
+
+    def get_middle_cache(self, layer_idx, truncate=False):
+        if truncate:
+            key = self.layer_caches[layer_idx][
+                0, :, :self.layer_cache_lens[layer_idx], :, :]
+            value = self.layer_caches[layer_idx][
+                1, :, :self.layer_cache_lens[layer_idx], :, :]
+        else:
+            key = self.layer_caches[layer_idx][0]
+            value = self.layer_caches[layer_idx][1]
+        return key, value, self.layer_cache_lens[layer_idx]
+
+    def get_sink_recent_cache(self, layer_idx):
+        return self.layer_sink_recent_caches[layer_idx][
+            0], self.layer_sink_recent_caches[layer_idx][1]
+
     def compute_topk(self, encoded_query: torch.Tensor, layer_idx: int):
         assert layer_idx >= self.num_skip_layers, f"hash topk is not enabled in layer{layer_idx}!"
         torch.cuda.nvtx.range_push("hash score")
-        encoded_query = encoded_query.view(self.curr_batch_size,
-                                           self.cur_q_len, self.num_heads,
-                                           self.hash_dim)
         score = KVLib.hamming_score(self.layer_hash_caches[layer_idx],
                                     encoded_query,
                                     self.layer_norm_caches[layer_idx],
                                     self.hash_rbits,
                                     self.layer_hash_seq_lens[layer_idx],
                                     self.use_norm)
-        score = score.view(self.curr_batch_size, self.num_key_value_heads,
-                           self.gqa_size, -1).sum(-2)
         largest = True if self.use_norm else False
-        if self.num_sink > 0:
-            score[:, :, :self.num_sink] = torch.finfo(
-                score.dtype).max if largest else 0
-        if self.num_recent > 0:
-            score[:, :, -self.num_recent:] = torch.finfo(
-                score.dtype).max if largest else 0
         torch.cuda.nvtx.range_pop()
 
         torch.cuda.nvtx.range_push("compute topk")
         if self.sparse_ratio < 1:
-            fetch_num = int(
-                (self.layer_hash_seq_lens[layer_idx] - self.num_sink -
-                 self.num_recent) *
-                self.sparse_ratio) + self.num_sink + self.num_recent
+            fetch_num = int(self.layer_hash_seq_lens[layer_idx] *
+                            self.sparse_ratio)
         else:
-            fetch_num = max(
-                min(
-                    int(self.sparse_ratio) - self.num_sink - self.num_recent,
-                    self.layer_hash_seq_lens[layer_idx]), 0)
+            fetch_num = min(int(self.sparse_ratio),
+                            self.layer_hash_seq_lens[layer_idx])
         topk_indices = KVLib.batch_topk(score, fetch_num, largest)
         # topk_indices = torch.topk(score, fetch_num, dim=-1,
         #                           largest=largest).indices.int()

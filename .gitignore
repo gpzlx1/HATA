@@ -13,3 +13,4 @@ __pycache__
 *.jsonl
 *.pdf
 tasks/preds
+*.nsys-rep

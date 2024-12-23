@@ -1,4 +1,3 @@
-from myTransformer.cache.kernels.triton_hash_encode import hash_encode
 import torch
 from functools import partial
 import myTransformer
@@ -83,9 +82,8 @@ for gather_len in gather_lens:
     attn_out1 = gather_sdpa(query_states, key_states, value_states,
                             gather_idx_long)
 
-    attn_out2 = myTransformer.capi.flash_index_decode(query_states, key_states,
-                                                      value_states, gather_idx,
-                                                      scale)
+    attn_out2, _ = myTransformer.capi.flash_index_decode(
+        query_states, key_states, value_states, gather_idx, scale)
 
     print("Max diff:", (attn_out1 - attn_out2).abs().max())
 

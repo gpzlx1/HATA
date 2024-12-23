@@ -203,8 +203,9 @@ def _prefill_hash_encode(
                    padding_option="zero")  # [BLOCK_M, HEAD_DIM]
 
     # norm
-    norm = tl.sum(data * data, axis=1).reshape(BLOCK_M, 1)
-    norm = tl.cast(tl.sqrt(tl.cast(norm, tl.float32)), tl.float16)
+    data_accum = tl.cast(data, tl.float32)
+    norm = tl.sum(data_accum * data_accum, axis=1).reshape(BLOCK_M, 1)
+    norm = tl.cast(tl.sqrt(norm), tl.float16)
     tl.store(OutputNorm_block_ptr, norm, boundary_check=(1, 0))
 
     # load pack tensor

@@ -35,20 +35,27 @@ def bench(layer: CustomLlamaDecoderLayer,
         for i in range(warmup):
             kvcache.reset(batch_size)
 
-            kvcache.alloc(prefill_len)
             prefill_hidden = torch.randn(
                 (batch_size, prefill_len, hidden_size),
                 dtype=dtype,
                 device=device).view(-1, hidden_size)
+
+            decode_hidden = [
+                torch.randn((batch_size, 1, hidden_size),
+                            dtype=dtype,
+                            device=device).view(-1, hidden_size)
+                for _ in range(decode_step)
+            ]
+
+            kvcache.alloc(prefill_len)
             layer(prefill_hidden, None, prefill_position_ids, kvcache, False,
                   True, None, None)
 
+            kvcache.alloc(1)
+
             for j in range(decode_step):
-                kvcache.alloc(1)
-                decode_hidden = torch.randn(
-                    (batch_size, 1, hidden_size), dtype=dtype,
-                    device=device).view(-1, hidden_size)
-                layer(decode_hidden, None, None, kvcache, False, True, None,
+
+                layer(decode_hidden[i], None, None, kvcache, False, True, None,
                       None)
 
         # bench
@@ -60,26 +67,35 @@ def bench(layer: CustomLlamaDecoderLayer,
                 dtype=dtype,
                 device=device).view(-1, hidden_size)
 
+            decode_hidden = [
+                torch.randn((batch_size, 1, hidden_size),
+                            dtype=dtype,
+                            device=device).view(-1, hidden_size)
+                for _ in range(decode_step)
+            ]
+
             # torch.cuda.synchronize()
             tic = time.time()
+
             kvcache.alloc(prefill_len)
             layer(prefill_hidden, None, prefill_position_ids, kvcache, False,
                   True, None, None)
-            toc = time.time()
+
             # torch.cuda.synchronize()
+            toc = time.time()
             prefill_time.append(toc - tic)
+
+            kvcache.alloc(1)
 
             for j in range(decode_step):
                 # torch.cuda.synchronize()
                 tic = time.time()
-                kvcache.alloc(1)
-                decode_hidden = torch.randn(
-                    (batch_size, 1, hidden_size), dtype=dtype,
-                    device=device).view(-1, hidden_size)
-                layer(decode_hidden, None, None, kvcache, False, True, None,
+
+                layer(decode_hidden[i], None, None, kvcache, False, True, None,
                       None)
-                toc = time.time()
+
                 # torch.cuda.synchronize()
+                toc = time.time()
                 decode_time.append(toc - tic)
 
     print(
@@ -91,19 +107,20 @@ def bench(layer: CustomLlamaDecoderLayer,
 
 
 if __name__ == "__main__":
-    device = "cuda:6"
+    device = "cuda:7"
     torch.cuda.set_device(device)
 
     decode_step = 200
     hash_rbits = 128
     sparse_ratio = 0.03
-    hash_weights_path = "/root/workspace/myoffloading/KVOffloading/model_weights/longchat-7b-v1.5-32k-128"
 
     model_path = "/nfs/shared_LLM_model/lmsys/longchat-7b-v1.5-32k"
+    # model_path = "/nfs/shared_LLM_model/meta-llama/Meta-Llama-3.1-8B-Instruct"
     tokenizer = AutoTokenizer.from_pretrained(model_path)
 
     config = AutoConfig.from_pretrained(model_path)
     config.num_hidden_layers = 1
+    config.torch_dtype = torch.float16
     config._attn_implementation = "flash_attention_2"
 
     from myTransformer.models.modeling_llama_hash import CustomLlamaDecoderLayer
@@ -117,10 +134,13 @@ if __name__ == "__main__":
                               1024,
                               sparse_ratio=sparse_ratio,
                               num_skip_layers=0,
-                              hash_weights_path=None)
+                              hash_weights_path=None,
+                              use_norm=True,
+                              num_sink=64,
+                              num_recent=32)
     kvcache.build_cache()
 
     for batch_size in [1]:
         print(f"batch_size: {batch_size}")
-        for prefill_len in [48000]:
+        for prefill_len in [96000]:
             bench(layer, kvcache, batch_size, prefill_len, decode_step, device)

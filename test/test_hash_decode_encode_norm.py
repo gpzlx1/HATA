@@ -51,7 +51,7 @@ def torch_hash_encode(data: torch.Tensor, hash_weight: torch.Tensor,
 torch.cuda.set_device(7)
 torch.manual_seed(42)
 
-BSZ = 1
+BSZ = 2
 SEQ = 1
 NUM_KV_HEAD = 8
 HEAD = 32

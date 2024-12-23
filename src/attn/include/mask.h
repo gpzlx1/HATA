@@ -8,6 +8,7 @@
 
 #include "utils.h"
 
+namespace kvlib {
 namespace flash {
 
 using namespace cute;
@@ -240,3 +241,4 @@ struct Mask {
 };
 
 }  // namespace flash
+}  // namespace kvlib

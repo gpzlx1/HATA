@@ -28,10 +28,11 @@ def bench(func):
 # data = data.int()
 # data = torch.arange(128 * 10000).int().cuda()
 # data = data.reshape(1, 128, 10000).float()
+BSZ = 2
 SEQ = 96000
 SEL = 3840
 NUM_HEAD = 32
-data = torch.randn(1, NUM_HEAD, SEQ, dtype=torch.float16,
+data = torch.randn(BSZ, NUM_HEAD, SEQ, dtype=torch.float16,
                    device='cuda')  #  * 1000
 # data = data.abs().to(torch.int32).to(torch.float16)
 

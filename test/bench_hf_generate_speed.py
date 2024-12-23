@@ -11,29 +11,26 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 def bench_prefill_decode_speed(model, tokenizer, prefill_len, batch_size):
 
-    warmup = 5
-    prefill_bench = 10
-    decode_bench = 10
-    decode_step = 20
+    warmup = 3
+    prefill_bench = 5
+    decode_bench = 5
+    decode_step = 200
     input_text = "A " * prefill_len
 
     generation_kwargs = {
-        "page_num": 3000,
+        "max_gpu_cache_memory": 28 * 1024 * 1024 * 1024,  # 30GB
+        "page_num": 1000,
         "page_size": 16,
-        "max_gpu_cache_memory": 20212254720,  # 30GB
         "hash_rbits": 128,
         "hash_weights_path":
-        "/root/workspace/myoffloading/KVOffloading/model_weights/longchat-7b-v1.5-32k-128",
-        "sparse_ratio": 0.1,
+        "/root/workspace/myoffloading/model_weights/longchat-7b-v1.5-32k-128",
+        # "/root/workspace/myoffloading/model_weights/Meta-Llama-3.1-8B-Instruct-128",
+        "sparse_ratio": 0.03,
+        "use_norm": True,
+        "num_sink": 64,
+        "num_recent": 32,
     }
     generation_config = GenerationConfig(**generation_kwargs)
-
-    # prompt = tokenizer.apply_chat_template(
-    #     [{"role": "user", "content": f"{input_text}"}],
-    #     add_generation_prompt=False,
-    #     tokenize=True,
-    #     return_tensors="pt",
-    # )
 
     prompt = tokenizer.encode(input_text, return_tensors="pt")
     prompt = prompt.to(model.device)
@@ -83,7 +80,7 @@ def bench_prefill_decode_speed(model, tokenizer, prefill_len, batch_size):
 
 
 if __name__ == "__main__":
-    device = "cuda:5"
+    device = "cuda:7"
     torch.cuda.set_device(device)
 
     # model_path = "/nfs/shared_LLM_model/meta-llama/Llama-2-7b-chat-hf"
@@ -94,6 +91,7 @@ if __name__ == "__main__":
 
     config = AutoConfig.from_pretrained(model_path)
     config._attn_implementation = "flash_attention_2"
+    config.torch_dtype = torch.float16
 
     print(config)
     from myTransformer.models.modeling_llama_hash import CustomLlamaForCausalLM
@@ -105,5 +103,5 @@ if __name__ == "__main__":
 
     batch_size = 1
     print(f"batch_size: {batch_size}")
-    for prefill_len in [1000, 2000, 4000, 8000, 16000, 32000]:
+    for prefill_len in [1000, 2000, 4000, 8000, 16000, 32000, 48000]:
         bench_prefill_decode_speed(model, tokenizer, prefill_len, batch_size)

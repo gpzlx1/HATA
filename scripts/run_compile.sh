@@ -54,3 +54,17 @@ mv decode_hash_encode_rbit256_dim128*.h ./src/decode_hash_encode_rbit256_dim128.
 # sleep 3
 # mv prefill_hash_encode_rbit256_dim128*.c ./src/prefill_hash_encode_rbit256_dim128.c
 # mv prefill_hash_encode_rbit256_dim128*.h ./src/prefill_hash_encode_rbit256_dim128.h
+
+############################### compile for decode_hash_encode ###############################
+python3 -m triton.tools.compile \
+     -n "_combine_attention" \
+     -w 4 \
+     -ns 1 \
+     -on "_combine_attention_dim128_kernel" \
+     -o "combine_attention_dim128" \
+     -s "*fp16, *fp16, *fp32, *fp32, *fp16, i32, 128, 8" \
+     -g 32,16,1 ./python/myTransformer/cache/kernels/triton_combine_attn.py
+
+sleep 3
+mv combine_attention_dim128*.c ./src/combine_attention_dim128.c
+mv combine_attention_dim128*.h ./src/combine_attention_dim128.h

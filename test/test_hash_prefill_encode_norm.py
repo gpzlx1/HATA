@@ -47,7 +47,7 @@ def torch_hash_encode(data: torch.Tensor, hash_weight: torch.Tensor,
     return packbit_key_code, key_states.norm(dim=-1)
 
 
-torch.cuda.set_device(1)
+torch.cuda.set_device(7)
 torch.manual_seed(42)
 
 BSZ = 10

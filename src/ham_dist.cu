@@ -88,15 +88,33 @@ __global__ void hamming_score_kernel(
   }
 
   __syncthreads();
-  half* o_ptr = output_ptr + batch_id * SEQ * num_head + m_start;
+  half* o_ptr = output_ptr + batch_id * SEQ * num_kv_head + m_start;
   // write to global memory
+
+  if (kv_group > 1) {
 #pragma unroll
-  for (int i = tid; i < BLOCK_M * num_head; i += blockDim.x) {
-    int head_id = i / BLOCK_M;
-    int m_id = i % BLOCK_M;
-    half* _o_ptr = o_ptr + head_id * SEQ + m_id;
-    if (m_id < max_m_coord) {
-      *_o_ptr = smem_score[i];
+    for (int i = tid; i < BLOCK_M * num_kv_head; i += blockDim.x) {
+      int kv_head_id = i / BLOCK_M;
+      int m_id = i % BLOCK_M;
+      if (m_id < max_m_coord) {
+        half* _o_ptr = o_ptr + kv_head_id * SEQ + m_id;
+        float sum = 0.0;
+        int head_id = kv_head_id * kv_group;
+        for (int h = 0; h < kv_group; h += 1) {
+          sum += (float)smem_score[(head_id + h) * BLOCK_M + m_id];
+        }
+        *_o_ptr = half(sum);
+      }
+    }
+  } else {
+#pragma unroll
+    for (int i = tid; i < BLOCK_M * num_head; i += blockDim.x) {
+      int head_id = i / BLOCK_M;
+      int m_id = i % BLOCK_M;
+      if (m_id < max_m_coord) {
+        half* _o_ptr = o_ptr + head_id * SEQ + m_id;
+        *_o_ptr = smem_score[i];
+      }
     }
   }
 }
@@ -139,7 +157,7 @@ torch::Tensor HammingScoreCUDA(torch::Tensor& key_codes,
   auto options = torch::TensorOptions().dtype(torch::kFloat16).device(device);
   cudaStream_t stream = c10::cuda::getCurrentCUDAStream(device_id);
 
-  torch::Tensor output = torch::empty({bsz, num_head, seq_len}, options);
+  torch::Tensor output = torch::empty({bsz, num_kv_head, seq_len}, options);
 
   constexpr int32_t BLOCK_M = 8;
   dim3 blks(32 * BLOCK_M);
@@ -148,6 +166,7 @@ torch::Tensor HammingScoreCUDA(torch::Tensor& key_codes,
   if (num_chunk % 2 == 0) {
     // convert int32 to int64 to process
     num_chunk = num_chunk / 2;
+    key_code_stride0 = key_code_stride0 / 2;
     key_code_stride1 = key_code_stride1 / 2;
     key_code_stride2 = key_code_stride2 / 2;
     size_t shm_size = BLOCK_M * num_head * sizeof(half) +  // for score
