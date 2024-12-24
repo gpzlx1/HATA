@@ -1,7 +1,8 @@
 #include <pybind11/pybind11.h>
 #include <torch/extension.h>
 
-#include "attn/flash_api.h"
+#include "cpu-attn/cpu_attn.h"
+#include "cuda-attn/flash_api.h"
 #include "operator.h"
 
 namespace py = pybind11;
@@ -17,4 +18,18 @@ PYBIND11_MODULE(KVLib, m) {
       .def("combine_attention", &kvlib::combine_attention)
       .def("kvcache_append", &kvlib::KVCacheAppend)
       .def("kvcache_append2", &kvlib::KVCacheAppend2);
+
+  py::class_<kvlib::CpuAttention>(m, "CpuAttention")
+      .def(py::init<size_t, int, const std::vector<int64_t>&>(),
+           py::arg("mem_size"), py::arg("n_dims"), py::arg("ne"),
+           "Initialize CpuAttention with memory size, dimensions, and shape")
+      .def("FillKeyValye", &kvlib::CpuAttention::FillKeyValye,
+           "Fill Cpu KeyValue Caches")
+      .def("Attention", &kvlib::CpuAttention::Attention,
+           "Compute Attention in CPU")
+      .def("SparseAttention", &kvlib::CpuAttention::SparseAttention,
+           "Compute Sparse Attention in CPU")
+      .def("SparseAttentionWithMeta",
+           &kvlib::CpuAttention::SparseAttentionWithMeta,
+           "Compute Sparse Attention in CPU with LSE exported");
 }

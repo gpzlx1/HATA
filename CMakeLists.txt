@@ -3,7 +3,7 @@ project(KVLib LANGUAGES CUDA CXX C)
 
 # find python
 find_package(Python 3.6 COMPONENTS Interpreter Development REQUIRED)
-set(PYTHON_INTERP /root/workspace/kvclus/myTransformer/venv/local/bin/python3)
+set(PYTHON_INTERP python)
 message(STATUS "Using Python interpreter: ${PYTHON_INTERP}")
 
 # find CUDA
@@ -51,13 +51,19 @@ if(OPENMP_FOUND)
 endif(OPENMP_FOUND)
 message(STATUS "Build with OpenMP")
 
+# Set ggml
+include_directories("3rdparty/ggml/include")
+add_subdirectory("3rdparty/ggml")
+list(APPEND KVLib_EXTERNAL_LIB ggml)
+
 # Define our library target
 # include_directories(src)
 file(GLOB KVLib_SRC
   src/*.c
   src/*.cc
   src/*.cu
-  src/attn/*.cu
+  src/cuda-attn/*.cu
+  src/cpu-attn/*.cc
 )
 pybind11_add_module(KVLib ${KVLib_SRC})
 target_include_directories(KVLib PUBLIC 3rdparty/raft/cpp/include)
