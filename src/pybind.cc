@@ -20,11 +20,8 @@ PYBIND11_MODULE(KVLib, m) {
       .def("kvcache_append2", &kvlib::KVCacheAppend2);
 
   py::class_<kvlib::CpuAttention>(m, "CpuAttention")
-      .def(py::init<size_t, int, const std::vector<int64_t>&>(),
-           py::arg("mem_size"), py::arg("n_dims"), py::arg("ne"),
+      .def(py::init<size_t, int>(), py::arg("mem_size"), py::arg("num_threads"),
            "Initialize CpuAttention with memory size, dimensions, and shape")
-      .def("FillKeyValye", &kvlib::CpuAttention::FillKeyValye,
-           "Fill Cpu KeyValue Caches")
       .def("Attention", &kvlib::CpuAttention::Attention,
            "Compute Attention in CPU")
       .def("SparseAttention", &kvlib::CpuAttention::SparseAttention,

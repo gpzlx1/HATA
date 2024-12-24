@@ -15,29 +15,23 @@ class CpuAttention {
   void MyGGML_print_tensor_data_float(const struct ggml_tensor* tensor);
 
   // CpuAttention(size_t mem_size, int n_dims, const int64_t* ne);
-  CpuAttention(size_t mem_size, int n_dims, const std::vector<int64_t>& ne);
+  CpuAttention(size_t mem_size, int num_threads);
   ~CpuAttention();
 
-  void FillKeyValye(torch::Tensor keys, torch::Tensor values);
-
-  void AppendKeyValue(torch::Tensor keys, torch::Tensor values);
-
-  //   struct ggml_tensor* ConvertFromTorchTensor(torch::Tensor t) {}
-
-  void Attention(torch::Tensor query, torch::Tensor result);
-  void SparseAttention(torch::Tensor query, torch::Tensor result,
-                       torch::Tensor index);
-
-  void SparseAttentionWithMeta(torch::Tensor query, torch::Tensor result,
-                               torch::Tensor index);
+  torch::Tensor Attention(torch::Tensor query, torch::Tensor key,
+                          torch::Tensor value, float scale);
+  torch::Tensor SparseAttention(torch::Tensor query, torch::Tensor key,
+                                torch::Tensor value, torch::Tensor index,
+                                float scale);
+  std::vector<torch::Tensor> SparseAttentionWithMeta(torch::Tensor query,
+                                                     torch::Tensor key,
+                                                     torch::Tensor value,
+                                                     torch::Tensor index,
+                                                     float scale);
 
  private:
-  struct ggml_context* ctx0;         // Holds the context
-  struct ggml_tensor* query_buffer;  // Holds the query buffer
-  struct ggml_tensor* key_buffer;
-  struct ggml_tensor* value_buffer;
-  int n_dims;               // Member variable for n_dims
-  std::vector<int64_t> ne;  // Member variable for ne
+  struct ggml_context* ggml_ctx;  // Holds the context
+  int num_threads;
 };
 
 }  // namespace kvlib

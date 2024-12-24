@@ -1,5 +1,6 @@
 import torch
 import math
+import time
 from KVLib import CpuAttention
 
 
@@ -7,19 +8,16 @@ def test_cpu_attention():
     bsz = 1  # batch size
     num_head = 32  # number of attention heads
     head_dim = 128  # head dimension
+    scale = 1 / math.sqrt(head_dim)
 
     # for seq in range(1000, 20000, 1000):
-    for seq in [7000]:
+    for seq in [1000]:
         print(f"sequence length: {seq}")
 
-        ne = list([bsz, num_head, seq,
-                   head_dim])  # [bsz, num_head, 1, head_dim]
-        ne.reverse()
-
         mem_size = 2 * 1024 * 1024 * 1024  # 2 GB
-        n_dims = len(ne)
+        n_threads = 64
 
-        cpu_attention = CpuAttention(mem_size, n_dims, ne)
+        cpu_attention = CpuAttention(mem_size, n_threads)
 
         for _ in range(10):
             query = torch.randn((bsz, num_head, 1, head_dim),
@@ -34,16 +32,13 @@ def test_cpu_attention():
                                 dtype=torch.float16,
                                 device="cpu",
                                 pin_memory=True)
-            cpu_attention.FillKeyValye(key, value)
-            result = torch.zeros((bsz, 1, num_head, head_dim),
-                                 dtype=torch.float32,
-                                 device="cpu",
-                                 pin_memory=True)
-            cpu_attention.Attention(query, result)
-            print()
+            tic = time.time()
+            result = cpu_attention.Attention(query, key, value, scale)
+            toc = time.time()
+            print(f"{(toc - tic) * 1000000:.3f} us")
 
         sdpa_attn, _ = torch._scaled_dot_product_flash_attention_for_cpu(
-            query.to(torch.float16), key, value, scale=1 / math.sqrt(head_dim))
+            query.to(torch.float16), key, value, scale=scale)
 
         print("sdpa attention")
         print(sdpa_attn, sdpa_attn.shape)

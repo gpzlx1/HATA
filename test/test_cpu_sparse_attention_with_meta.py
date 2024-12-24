@@ -1,5 +1,6 @@
 import torch
 import math
+import time
 from KVLib import CpuAttention
 
 
@@ -7,11 +8,18 @@ def test_cpu_attention():
     bsz = 1  # batch size
     num_head = 32  # number of attention heads
     head_dim = 128  # head dimension
+    scale = 1 / math.sqrt(head_dim)
 
     # for seq in range(1000, 20000, 1000):
     for seq in [7000]:
         gather_len = int(seq * 0.1)
-        print(f"sequence length:{seq}")
+        print(f"sequence length: {seq}, gather: {gather_len}")
+
+        mem_size = 2 * 1024 * 1024 * 1024  # 2 GB
+        n_threads = 64
+
+        cpu_attention = CpuAttention(mem_size, n_threads)
+
         query = torch.randn((bsz, num_head, 1, head_dim),
                             dtype=torch.float32,
                             device="cpu",
@@ -25,34 +33,20 @@ def test_cpu_attention():
                             device="cpu",
                             pin_memory=True)
 
-        ne = list(key.shape)  # [bsz, num_head, 1, head_dim]
-        ne.reverse()
-
-        mem_size = 2 * 1024 * 1024 * 1024  # 2 GB
-        n_dims = len(ne)
-
-        cpu_attention = CpuAttention(mem_size, n_dims, ne)
-
-        cpu_attention.FillKeyValye(key, value)
-
-        result = torch.zeros(bsz * num_head * 1 * (head_dim + 1),
-                             dtype=torch.float32,
-                             device="cpu",
-                             pin_memory=True)
-
         for _ in range(10):
             gather_idx = torch.randperm(bsz * num_head * seq,
                                         dtype=torch.int64,
                                         device="cpu")[:bsz * num_head *
                                                       gather_len]
             gather_idx = gather_idx.view(bsz, num_head, gather_len, 1) % seq
-            cpu_attention.SparseAttentionWithMeta(query, result, gather_idx)
-            print()
 
-        lse_res = result[bsz * num_head * 1 * head_dim:]
-        result = result[:bsz * num_head * 1 * head_dim]
-        lse_res = lse_res.view(bsz, 1, num_head, 1)
-        result = result.view(bsz, 1, num_head, head_dim)
+            tic = time.time()
+            result, lse_res = cpu_attention.SparseAttentionWithMeta(
+                query, key, value, gather_idx, scale)
+            toc = time.time()
+            print(f"{(toc - tic) * 1000000:.3f} us")
+
+        print(result.shape)
 
         expand_idx = gather_idx.expand(-1, -1, -1, head_dim)
         selected_key = torch.gather(key, -2, expand_idx)

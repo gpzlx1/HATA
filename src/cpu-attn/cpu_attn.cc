@@ -81,103 +81,97 @@ void CpuAttention::MyGGML_print_tensor_data_float(
   }
 }
 
-// CpuAttention::CpuAttention(size_t mem_size, int n_dims, const int64_t* ne)
-//     : n_dims(n_dims), ne(ne)  // Initialize n_dims and ne
-// {
-//     struct ggml_init_params params = {
-//         /* .mem_size   = */ mem_size,
-//         /* .mem_buffer = */ NULL,
-//         /* .no_alloc   = */ false,
-//     };
-//     ctx0 = ggml_init(params);
-//     const int64_t query_ne[4] = {ne[0], 1, ne[2], ne[3]};
-//     query_buffer = ggml_new_tensor(ctx0, GGML_TYPE_F16, n_dims, query_ne);
-//     MyGGML_print_tensor(query_buffer);
-// }
-
-CpuAttention::CpuAttention(size_t mem_size, int n_dims,
-                           const std::vector<int64_t>& ne)
-    : n_dims(n_dims),
-      ne(ne)  // Initialize n_dims and ne
-{
+CpuAttention::CpuAttention(size_t mem_size, int num_threads)
+    : num_threads(num_threads) {
   struct ggml_init_params params = {
       /* .mem_size   = */ mem_size,
       /* .mem_buffer = */ NULL,
       /* .no_alloc   = */ true,
   };
-  ctx0 = ggml_init(params);
-  const int64_t query_ne[4] = {ne[0], 1, ne[2], ne[3]};
-  query_buffer = ggml_new_tensor(ctx0, GGML_TYPE_F32, n_dims, query_ne);
-  // MyGGML_print_tensor(query_buffer);
+  ggml_ctx = ggml_init(params);
 }
 
 CpuAttention::~CpuAttention() {
   // Add destructor to clean up resources if necessary
-  ggml_free(ctx0);
+  ggml_free(ggml_ctx);
 }
 
-void CpuAttention::FillKeyValye(torch::Tensor keys, torch::Tensor values) {
-  const int64_t kv_ne[4] = {ne[0], ne[1], ne[2], ne[3]};
-  key_buffer = ggml_new_tensor(ctx0, GGML_TYPE_F16, n_dims, kv_ne);
-  value_buffer = ggml_new_tensor(ctx0, GGML_TYPE_F16, n_dims, kv_ne);
-  // MyGGML_print_tensor(key_buffer);
-  // MyGGML_print_tensor(value_buffer);
-  key_buffer->data = keys.data_ptr();
-  value_buffer->data = values.data_ptr();
-  // MyGGML_print_tensor_data(key_buffer);
-  // MyGGML_print_tensor_data(value_buffer);
-  return;
-}
+torch::Tensor CpuAttention::Attention(torch::Tensor query, torch::Tensor key,
+                                      torch::Tensor value, float scale) {
+  const int32_t bsz = query.size(0);
+  const int32_t num_heads = query.size(1);
+  const int32_t num_kv_heads = key.size(1);
+  const int32_t seqlen_q = query.size(2);
+  const int32_t seqlen_kv = key.size(2);
+  const int32_t head_dim = query.size(3);
 
-void CpuAttention::AppendKeyValue(torch::Tensor keys, torch::Tensor values) {
-  const int64_t kv_ne[4] = {ne[0], 1, ne[2], ne[3]};
-  struct ggml_tensor* new_key_buffer =
-      ggml_new_tensor(ctx0, GGML_TYPE_F16, n_dims, kv_ne);
-  struct ggml_tensor* new_value_buffer =
-      ggml_new_tensor(ctx0, GGML_TYPE_F16, n_dims, kv_ne);
-  new_key_buffer->data = keys.data_ptr();
-  new_value_buffer->data = values.data_ptr();
-  // TODO: add append logic here
-  // MyGGML_print_tensor_data(key_buffer);
-  // MyGGML_print_tensor_data(value_buffer);
-  return;
-}
+  auto result =
+      torch::zeros({bsz, seqlen_q, num_heads, head_dim}, query.options());
 
-//   struct ggml_tensor* ConvertFromTorchTensor(torch::Tensor t) {}
+  const int64_t query_ne[4] = {head_dim, seqlen_q, num_heads, bsz};
+  const int64_t key_ne[4] = {head_dim, seqlen_kv, num_kv_heads, bsz};
 
-void CpuAttention::Attention(torch::Tensor query, torch::Tensor result) {
-  query_buffer->data = query.data_ptr();
-  struct ggml_tensor* dst =
-      ggml_flash_attn_ext(ctx0, query_buffer, key_buffer, value_buffer, nullptr,
-                          1.0f / sqrt(ne[0]), 0, 0);
+  auto query_buffer = ggml_new_tensor(ggml_ctx, GGML_TYPE_F32, 4, query_ne);
+  auto key_buffer = ggml_new_tensor(ggml_ctx, GGML_TYPE_F16, 4, key_ne);
+  auto value_buffer = ggml_new_tensor(ggml_ctx, GGML_TYPE_F16, 4, key_ne);
+
+  query_buffer->data = query.data_ptr<float>();
+  key_buffer->data = (half*)key.data_ptr<at::Half>();
+  value_buffer->data = (half*)value.data_ptr<at::Half>();
+
+  struct ggml_tensor* dst = ggml_flash_attn_ext(
+      ggml_ctx, query_buffer, key_buffer, value_buffer, nullptr, scale, 0, 0);
   dst->data = result.data_ptr<float>();
 
-  ggml_cgraph* gf = ggml_new_graph(ctx0);
+  ggml_cgraph* gf = ggml_new_graph(ggml_ctx);
   ggml_build_forward_expand(gf, dst);
   std::vector<uint8_t> buf;
-  struct ggml_cplan plan = ggml_graph_plan(gf, 32, nullptr);
+  struct ggml_cplan plan = ggml_graph_plan(gf, num_threads, nullptr);
   if (plan.work_size > 0) {
     buf.resize(plan.work_size);
     plan.work_data = buf.data();
   }
 
   ggml_graph_compute(gf, &plan);
+
+  return result;
 }
 
-void CpuAttention::SparseAttention(torch::Tensor query, torch::Tensor result,
-                                   torch::Tensor index) {
-  query_buffer->data = query.data_ptr();
-  const int64_t index_ne[4] = {index.sizes()[3], index.sizes()[2],
-                               index.sizes()[1], index.sizes()[0]};
-  struct ggml_tensor* index_tensor =
-      ggml_new_tensor(ctx0, GGML_TYPE_I64, n_dims, index_ne);
-  index_tensor->data = index.data_ptr();
+torch::Tensor CpuAttention::SparseAttention(torch::Tensor query,
+                                            torch::Tensor key,
+                                            torch::Tensor value,
+                                            torch::Tensor index, float scale) {
+  const int32_t bsz = query.size(0);
+  const int32_t num_heads = query.size(1);
+  const int32_t num_kv_heads = key.size(1);
+  const int32_t seqlen_q = query.size(2);
+  const int32_t seqlen_kv = key.size(2);
+  const int32_t seqlen_gather = index.size(2);
+  const int32_t head_dim = query.size(3);
+
+  auto result =
+      torch::zeros({bsz, seqlen_q, num_heads, head_dim}, query.options());
+
+  const int64_t query_ne[4] = {head_dim, seqlen_q, num_heads, bsz};
+  const int64_t key_ne[4] = {head_dim, seqlen_kv, num_kv_heads, bsz};
+  const int64_t index_ne[4] = {1, seqlen_gather, num_kv_heads, bsz};
+
+  auto index_tensor = ggml_new_tensor(ggml_ctx, GGML_TYPE_I64, 4, index_ne);
+  auto query_buffer = ggml_new_tensor(ggml_ctx, GGML_TYPE_F32, 4, query_ne);
+  auto key_buffer = ggml_new_tensor(ggml_ctx, GGML_TYPE_F16, 4, key_ne);
+  auto value_buffer = ggml_new_tensor(ggml_ctx, GGML_TYPE_F16, 4, key_ne);
+
+  query_buffer->data = query.data_ptr<float>();
+  key_buffer->data = (half*)key.data_ptr<at::Half>();
+  value_buffer->data = (half*)value.data_ptr<at::Half>();
+  index_tensor->data = index.data_ptr<int64_t>();
+
   struct ggml_tensor* dst = ggml_sparse_flash_attn_ext(
-      ctx0, query_buffer, key_buffer, value_buffer, index_tensor, nullptr,
-      1.0f / sqrt(ne[0]), 0, 0);
+      ggml_ctx, query_buffer, key_buffer, value_buffer, index_tensor, nullptr,
+      scale, 0, 0);
   dst->data = result.data_ptr<float>();
 
-  ggml_cgraph* gf = ggml_new_graph(ctx0);
+  ggml_cgraph* gf = ggml_new_graph(ggml_ctx);
   ggml_build_forward_expand(gf, dst);
   std::vector<uint8_t> buf;
   struct ggml_cplan plan = ggml_graph_plan(gf, 32, nullptr);
@@ -187,23 +181,44 @@ void CpuAttention::SparseAttention(torch::Tensor query, torch::Tensor result,
   }
 
   ggml_graph_compute(gf, &plan);
+
+  return result;
 }
 
-void CpuAttention::SparseAttentionWithMeta(torch::Tensor query,
-                                           torch::Tensor result,
-                                           torch::Tensor index) {
-  query_buffer->data = query.data_ptr();
-  const int64_t index_ne[4] = {index.sizes()[3], index.sizes()[2],
-                               index.sizes()[1], index.sizes()[0]};
-  struct ggml_tensor* index_tensor =
-      ggml_new_tensor(ctx0, GGML_TYPE_I64, n_dims, index_ne);
-  index_tensor->data = index.data_ptr();
+std::vector<torch::Tensor> CpuAttention::SparseAttentionWithMeta(
+    torch::Tensor query, torch::Tensor key, torch::Tensor value,
+    torch::Tensor index, float scale) {
+  const int32_t bsz = query.size(0);
+  const int32_t num_heads = query.size(1);
+  const int32_t num_kv_heads = key.size(1);
+  const int32_t seqlen_q = query.size(2);
+  const int32_t seqlen_kv = key.size(2);
+  const int32_t seqlen_gather = index.size(2);
+  const int32_t head_dim = query.size(3);
+
+  auto result = torch::zeros({bsz * seqlen_q * num_heads * (head_dim + 1)},
+                             query.options());
+
+  const int64_t query_ne[4] = {head_dim, seqlen_q, num_heads, bsz};
+  const int64_t key_ne[4] = {head_dim, seqlen_kv, num_kv_heads, bsz};
+  const int64_t index_ne[4] = {1, seqlen_gather, num_kv_heads, bsz};
+
+  auto index_tensor = ggml_new_tensor(ggml_ctx, GGML_TYPE_I64, 4, index_ne);
+  auto query_buffer = ggml_new_tensor(ggml_ctx, GGML_TYPE_F32, 4, query_ne);
+  auto key_buffer = ggml_new_tensor(ggml_ctx, GGML_TYPE_F16, 4, key_ne);
+  auto value_buffer = ggml_new_tensor(ggml_ctx, GGML_TYPE_F16, 4, key_ne);
+
+  query_buffer->data = query.data_ptr<float>();
+  key_buffer->data = (half*)key.data_ptr<at::Half>();
+  value_buffer->data = (half*)value.data_ptr<at::Half>();
+  index_tensor->data = index.data_ptr<int64_t>();
+
   struct ggml_tensor* dst = ggml_sparse_flash_attn_with_meta_ext(
-      ctx0, query_buffer, key_buffer, value_buffer, index_tensor, nullptr,
-      1.0f / sqrt(ne[0]), 0, 0);
+      ggml_ctx, query_buffer, key_buffer, value_buffer, index_tensor, nullptr,
+      scale, 0, 0);
   dst->data = result.data_ptr<float>();
 
-  ggml_cgraph* gf = ggml_new_graph(ctx0);
+  ggml_cgraph* gf = ggml_new_graph(ggml_ctx);
   ggml_build_forward_expand(gf, dst);
   std::vector<uint8_t> buf;
   struct ggml_cplan plan = ggml_graph_plan(gf, 32, nullptr);
@@ -213,6 +228,19 @@ void CpuAttention::SparseAttentionWithMeta(torch::Tensor query,
   }
 
   ggml_graph_compute(gf, &plan);
+
+  torch::Tensor lse =
+      result
+          .index({torch::indexing::Slice(bsz * num_heads * seqlen_q * head_dim,
+                                         torch::indexing::None)})
+          .reshape({bsz, seqlen_q, num_heads, 1});
+  torch::Tensor attn =
+      result
+          .index({torch::indexing::Slice(
+              torch::indexing::None, bsz * num_heads * seqlen_q * head_dim)})
+          .reshape({bsz, seqlen_q, num_heads, head_dim});
+
+  return {attn, lse};
 }
 
 }  // namespace kvlib
