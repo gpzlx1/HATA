@@ -155,20 +155,13 @@ void CpuAttention::Attention(torch::Tensor query, torch::Tensor result) {
   ggml_cgraph* gf = ggml_new_graph(ctx0);
   ggml_build_forward_expand(gf, dst);
   std::vector<uint8_t> buf;
-  struct ggml_cplan plan = ggml_graph_plan(gf, 1, nullptr);
+  struct ggml_cplan plan = ggml_graph_plan(gf, 32, nullptr);
   if (plan.work_size > 0) {
     buf.resize(plan.work_size);
     plan.work_data = buf.data();
   }
 
-  auto start_time = std::chrono::high_resolution_clock::now();
   ggml_graph_compute(gf, &plan);
-  auto elapsed_time = std::chrono::high_resolution_clock::now() - start_time;
-  std::cout << "Computation took: "
-            << std::chrono::duration_cast<std::chrono::microseconds>(
-                   elapsed_time)
-                   .count()
-            << " us" << std::endl;
 }
 
 void CpuAttention::SparseAttention(torch::Tensor query, torch::Tensor result,
@@ -193,14 +186,7 @@ void CpuAttention::SparseAttention(torch::Tensor query, torch::Tensor result,
     plan.work_data = buf.data();
   }
 
-  auto start_time = std::chrono::high_resolution_clock::now();
   ggml_graph_compute(gf, &plan);
-  auto elapsed_time = std::chrono::high_resolution_clock::now() - start_time;
-  std::cout << "Computation took: "
-            << std::chrono::duration_cast<std::chrono::microseconds>(
-                   elapsed_time)
-                   .count()
-            << " us" << std::endl;
 }
 
 void CpuAttention::SparseAttentionWithMeta(torch::Tensor query,
@@ -226,14 +212,7 @@ void CpuAttention::SparseAttentionWithMeta(torch::Tensor query,
     plan.work_data = buf.data();
   }
 
-  auto start_time = std::chrono::high_resolution_clock::now();
   ggml_graph_compute(gf, &plan);
-  auto elapsed_time = std::chrono::high_resolution_clock::now() - start_time;
-  std::cout << "Computation took: "
-            << std::chrono::duration_cast<std::chrono::microseconds>(
-                   elapsed_time)
-                   .count()
-            << " us" << std::endl;
 }
 
 }  // namespace kvlib

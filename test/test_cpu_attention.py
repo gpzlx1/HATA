@@ -9,22 +9,11 @@ def test_cpu_attention():
     head_dim = 128  # head dimension
 
     # for seq in range(1000, 20000, 1000):
-    for seq in [1000]:
+    for seq in [7000]:
         print(f"sequence length: {seq}")
-        query = torch.randn((bsz, num_head, 1, head_dim),
-                            dtype=torch.float32,
-                            device="cpu",
-                            pin_memory=True)
-        key = torch.randn((bsz, num_head, seq, head_dim),
-                          dtype=torch.float16,
-                          device="cpu",
-                          pin_memory=True)
-        value = torch.randn((bsz, num_head, seq, head_dim),
-                            dtype=torch.float16,
-                            device="cpu",
-                            pin_memory=True)
 
-        ne = list(key.shape)  # [bsz, num_head, 1, head_dim]
+        ne = list([bsz, num_head, seq,
+                   head_dim])  # [bsz, num_head, 1, head_dim]
         ne.reverse()
 
         mem_size = 2 * 1024 * 1024 * 1024  # 2 GB
@@ -32,14 +21,26 @@ def test_cpu_attention():
 
         cpu_attention = CpuAttention(mem_size, n_dims, ne)
 
-        cpu_attention.FillKeyValye(key, value)
-
-        result = torch.zeros((bsz, 1, num_head, head_dim),
-                             dtype=torch.float32,
-                             device="cpu",
-                             pin_memory=True)
-
-        cpu_attention.Attention(query, result)
+        for _ in range(10):
+            query = torch.randn((bsz, num_head, 1, head_dim),
+                                dtype=torch.float32,
+                                device="cpu",
+                                pin_memory=True)
+            key = torch.randn((bsz, num_head, seq, head_dim),
+                              dtype=torch.float16,
+                              device="cpu",
+                              pin_memory=True)
+            value = torch.randn((bsz, num_head, seq, head_dim),
+                                dtype=torch.float16,
+                                device="cpu",
+                                pin_memory=True)
+            cpu_attention.FillKeyValye(key, value)
+            result = torch.zeros((bsz, 1, num_head, head_dim),
+                                 dtype=torch.float32,
+                                 device="cpu",
+                                 pin_memory=True)
+            cpu_attention.Attention(query, result)
+            print()
 
         sdpa_attn, _ = torch._scaled_dot_product_flash_attention_for_cpu(
             query.to(torch.float16), key, value, scale=1 / math.sqrt(head_dim))

@@ -9,9 +9,9 @@ def test_cpu_attention():
     head_dim = 128  # head dimension
 
     # for seq in range(1000, 20000, 1000):
-    for seq in [1000]:
+    for seq in [7000]:
         gather_len = int(seq * 0.1)
-        print(f"sequence length: {seq}")
+        print(f"sequence length: {seq}, gather: {gather_len}")
         query = torch.randn((bsz, num_head, 1, head_dim),
                             dtype=torch.float32,
                             device="cpu",
@@ -24,11 +24,6 @@ def test_cpu_attention():
                             dtype=torch.float16,
                             device="cpu",
                             pin_memory=True)
-
-        gather_idx = torch.randperm(bsz * num_head * seq,
-                                    dtype=torch.int64,
-                                    device="cpu")[:bsz * num_head * gather_len]
-        gather_idx = gather_idx.view(bsz, num_head, gather_len, 1) % seq
 
         ne = list(key.shape)  # [bsz, num_head, 1, head_dim]
         ne.reverse()
@@ -45,7 +40,14 @@ def test_cpu_attention():
                              device="cpu",
                              pin_memory=True)
 
-        cpu_attention.SparseAttention(query, result, gather_idx)
+        for _ in range(10):
+            gather_idx = torch.randperm(bsz * num_head * seq,
+                                        dtype=torch.int64,
+                                        device="cpu")[:bsz * num_head *
+                                                      gather_len]
+            gather_idx = gather_idx.view(bsz, num_head, gather_len, 1) % seq
+            cpu_attention.SparseAttention(query, result, gather_idx)
+            print()
 
         expand_idx = gather_idx.expand(-1, -1, -1, head_dim)
         selected_key = torch.gather(key, -2, expand_idx)
