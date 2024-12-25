@@ -156,7 +156,7 @@ torch::Tensor CpuAttention::SparseAttention(torch::Tensor query,
   const int64_t key_ne[4] = {head_dim, seqlen_kv, num_kv_heads, bsz};
   const int64_t index_ne[4] = {1, seqlen_gather, num_kv_heads, bsz};
 
-  auto index_tensor = ggml_new_tensor(ggml_ctx, GGML_TYPE_I64, 4, index_ne);
+  auto index_tensor = ggml_new_tensor(ggml_ctx, GGML_TYPE_I32, 4, index_ne);
   auto query_buffer = ggml_new_tensor(ggml_ctx, GGML_TYPE_F32, 4, query_ne);
   auto key_buffer = ggml_new_tensor(ggml_ctx, GGML_TYPE_F16, 4, key_ne);
   auto value_buffer = ggml_new_tensor(ggml_ctx, GGML_TYPE_F16, 4, key_ne);
@@ -164,7 +164,7 @@ torch::Tensor CpuAttention::SparseAttention(torch::Tensor query,
   query_buffer->data = query.data_ptr<float>();
   key_buffer->data = (half*)key.data_ptr<at::Half>();
   value_buffer->data = (half*)value.data_ptr<at::Half>();
-  index_tensor->data = index.data_ptr<int64_t>();
+  index_tensor->data = index.data_ptr<int32_t>();
 
   struct ggml_tensor* dst = ggml_sparse_flash_attn_ext(
       ggml_ctx, query_buffer, key_buffer, value_buffer, index_tensor, nullptr,
@@ -174,7 +174,7 @@ torch::Tensor CpuAttention::SparseAttention(torch::Tensor query,
   ggml_cgraph* gf = ggml_new_graph(ggml_ctx);
   ggml_build_forward_expand(gf, dst);
   std::vector<uint8_t> buf;
-  struct ggml_cplan plan = ggml_graph_plan(gf, 32, nullptr);
+  struct ggml_cplan plan = ggml_graph_plan(gf, num_threads, nullptr);
   if (plan.work_size > 0) {
     buf.resize(plan.work_size);
     plan.work_data = buf.data();
@@ -221,7 +221,7 @@ std::vector<torch::Tensor> CpuAttention::SparseAttentionWithMeta(
   ggml_cgraph* gf = ggml_new_graph(ggml_ctx);
   ggml_build_forward_expand(gf, dst);
   std::vector<uint8_t> buf;
-  struct ggml_cplan plan = ggml_graph_plan(gf, 32, nullptr);
+  struct ggml_cplan plan = ggml_graph_plan(gf, num_threads, nullptr);
   if (plan.work_size > 0) {
     buf.resize(plan.work_size);
     plan.work_data = buf.data();
