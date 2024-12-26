@@ -1,5 +1,9 @@
 #include "cpu_attn.h"
 
+#ifdef USE_PROFILER
+#include "cpu_cache_profiler.h"
+#endif
+
 namespace kvlib {
 
 void CpuAttention::MyGGML_print_tensor(const struct ggml_tensor* tensor) {
@@ -132,7 +136,15 @@ torch::Tensor CpuAttention::Attention(torch::Tensor query, torch::Tensor key,
     plan.work_data = buf.data();
   }
 
+#ifdef USE_PROFILER
+  CPUCacheProfiler profiler;
+  profiler.start();
   ggml_graph_compute(gf, &plan);
+  profiler.stop();
+  profiler.report();
+#else
+  ggml_graph_compute(gf, &plan);
+#endif
 
   return result;
 }
@@ -180,7 +192,15 @@ torch::Tensor CpuAttention::SparseAttention(torch::Tensor query,
     plan.work_data = buf.data();
   }
 
+#ifdef USE_PROFILER
+  CPUCacheProfiler profiler;
+  profiler.start();
   ggml_graph_compute(gf, &plan);
+  profiler.stop();
+  profiler.report();
+#else
+  ggml_graph_compute(gf, &plan);
+#endif
 
   return result;
 }
