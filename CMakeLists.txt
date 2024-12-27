@@ -56,18 +56,6 @@ include_directories("3rdparty/ggml/include")
 add_subdirectory("3rdparty/ggml")
 list(APPEND KVLib_EXTERNAL_LIB ggml)
 
-# set papi
-if(DEFINED ENV{PAPI_DIR})
-  message(STATUS "Enable cpu cache profiler")
-  set(PAPI_DIR $ENV{PAPI_DIR})
-  add_definitions(-DUSE_PROFILER)
-  include_directories("${PAPI_DIR}/include")
-  link_directories("${PAPI_DIR}/lib")
-  list(APPEND KVLib_EXTERNAL_LIB papi)
-else()
-  message(STATUS "PAPI_DIR is not defined!")
-endif()
-
 # Define our library target
 # include_directories(src)
 file(GLOB KVLib_SRC
