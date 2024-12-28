@@ -12,7 +12,7 @@ def test_cpu_attention():
     scale = 1 / math.sqrt(head_dim)
 
     # for seq in range(1000, 20000, 1000):
-    for seq in [10000]:
+    for seq in [1000, 2000, 5000, 10000]:
         print(f"sequence length: {seq}")
         mem_size = 2 * 1024 * 1024 * 1024  # 2 GB
         n_threads = 32
@@ -21,7 +21,7 @@ def test_cpu_attention():
 
         time_log = []
         time_list = []
-        
+
         for _ in range(30):
             query = torch.randn((bsz, num_head, 1, head_dim),
                                 dtype=torch.float32,
@@ -41,11 +41,10 @@ def test_cpu_attention():
             result = cpu_attention.Attention(query, key, value, scale)
             toc = time.time()
             time_log.append((toc - tic) * 1000000)
-            print(f"{(toc - tic) * 1000000:.3f} us")
-            
+            # print(f"{(toc - tic) * 1000000:.3f} us")
+
             time_list.append((toc - tic) * 1000000)
-            
-        
+
         print(np.mean(time_list[5:]))
         # print(f"sequence length {seq}: {np.mean(time_log[2:]):.3f} us")
 
