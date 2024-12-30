@@ -69,8 +69,7 @@ class CustomStaticCache(Cache):
                type="key",
                inc_seq_len=True):
 
-        kv_numel = key_states.shape[0]
-        q_len = kv_numel // self.curr_batch_size
+        q_len = self.cur_q_len
 
         assert q_len < self.max_seq_len, "q_len should be less than max_seq_len"
 

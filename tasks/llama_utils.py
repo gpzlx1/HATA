@@ -48,7 +48,7 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
             "page_num": 1000,
             "page_size": 16,
         }
-        from myTransformer.models.modeling_llama import CustomLlamaForCausalLM
+        from myTransformer.models.modeling_llama_flashinfer import CustomLlamaForCausalLM
         model = CustomLlamaForCausalLM.from_pretrained(model_name_or_path,
                                                        config=model_config)
 
@@ -73,6 +73,18 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
         }
         model_config._attn_implementation = "sdpa"
         from myTransformer.models.modeling_llama_hash import CustomLlamaForCausalLM
+        model = CustomLlamaForCausalLM.from_pretrained(model_name_or_path,
+                                                       config=model_config)
+
+    elif method == "infinigen":
+        generate_config = {
+            "max_gpu_cache_memory": 19 * 1024 * 1024 * 1024,
+            "num_channels": 38,
+            "skewing_matrix_path": os.environ["SKEWING_PATH"],
+            "sparse_ratio": float(os.environ["TOPK_RATIO"]),
+        }
+        model_config._attn_implementation = "sdpa"
+        from myTransformer.models.modeling_llama_infinigen import CustomLlamaForCausalLM
         model = CustomLlamaForCausalLM.from_pretrained(model_name_or_path,
                                                        config=model_config)
 
