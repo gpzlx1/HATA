@@ -6,7 +6,7 @@ from tqdm import tqdm
 from functools import partial
 from accelerate import dispatch_model, infer_auto_device_map
 from accelerate.utils import get_balanced_memory
-from dataloader import LongBenchManager, InfiniteBenchManager, NIAHManager
+from dataloader import LongBenchManager, InfiniteBenchManager, NIAHManager, RULERManager
 
 from utils import DefaultDataCollator
 from llama_utils import (
@@ -135,7 +135,7 @@ if __name__ == "__main__":
         "--dataset_name",
         type=str,
         default="longbench",
-        choices=["longbench", "infinitebench", "niah"],
+        choices=["longbench", "infinitebench", "niah", "ruler"],
     )
     parser.add_argument("--output_dir", type=str, required=True)
     parser.add_argument("--e",
@@ -169,8 +169,14 @@ if __name__ == "__main__":
             args.dataset_path,
         )
         tasks = dataset_manager.get_dataset_names()
-    else:
+    elif args.dataset_name == "niah":
         dataset_manager = NIAHManager(
+            args.dataset_path,
+            args.dataset_path,
+        )
+        tasks = dataset_manager.get_dataset_names()
+    elif args.dataset_name == "ruler":
+        dataset_manager = RULERManager(
             args.dataset_path,
             args.dataset_path,
         )

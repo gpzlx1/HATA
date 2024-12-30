@@ -126,6 +126,21 @@ datasets_maxlen = {
     "math_calc": 30000,
     "code_run": 32,
     "code_debug": 32,
+
+    # RULER
+    "niah_single_1": 128,
+    "niah_single_2": 128,
+    "niah_single_3": 128,
+    "niah_multikey_1": 128,
+    "niah_multikey_2": 128,
+    "niah_multikey_3": 128,
+    "niah_multivalue": 128,
+    "niah_multiquery": 128,
+    "vt": 30,
+    "cwe": 120,
+    "fwe": 50,
+    "qa_1": 32,
+    "qa_2": 32,
 }
 
 datasets_category = {
@@ -200,6 +215,27 @@ def load_processed_infinitebench_dataset(path, data_name):
     for line in lines:
         eg = json.loads(line)
         ret.append(eg)
+
+    return Dataset.from_list(ret)
+
+
+def load_ruler_dataset(path, data_name):
+    fin = open(os.path.join(path, f"{data_name}/validation.jsonl"),
+               "r",
+               encoding="utf-8")
+    lines = fin.readlines()
+    fin.close()
+    ret = []
+    for line in lines:
+        eg = json.loads(line)
+        instance = {
+            "_id": eg["index"],
+            "context": eg["input"],
+            "answers": eg["outputs"],
+            "length": eg["length"],
+        }
+        instance["all_classes"] = None
+        ret.append(instance)
 
     return Dataset.from_list(ret)
 
@@ -572,6 +608,64 @@ class NIAHManager(DatasetManager):
                 prompt = tokenizer.decode(tokenized_prompt[-max_length:],
                                           skip_special_tokens=True)
 
+            encoded = apply_chat_template(prompt, tokenizer)
+
+            outputs["input_ids"].append(encoded["input_ids"])
+            outputs["attention_mask"].append(encoded["attention_mask"])
+            outputs["index"].append(index)
+
+        return outputs
+
+
+class RULERManager(DatasetManager):
+
+    def __init__(self, path, data_dir):
+        super().__init__(path, data_dir)
+
+    @staticmethod
+    def get_dataset_names():
+        datasets = [
+            "niah_single_1",
+            "niah_single_2",
+            "niah_single_3",
+            "niah_multikey_1",
+            "niah_multikey_2",
+            "niah_multikey_3",
+            "niah_multivalue",
+            "niah_multiquery",
+            "vt",
+            "cwe",
+            "fwe",
+            "qa_1",
+            "qa_2",
+        ]
+        return datasets
+
+    def get_data(self, dataset_name):
+        return load_ruler_dataset(self.data_dir, dataset_name)
+
+    def get_dataset_info(self, dataset_name):
+        return (
+            None,
+            datasets_maxlen[dataset_name],
+            None,
+        )
+
+    @staticmethod
+    def process_raw_data(
+        data,
+        indices,
+        tokenizer,
+        apply_chat_template,
+        task,
+        max_length=3500,
+        truncate_from_middle=True,
+    ):
+        outputs = {"input_ids": [], "attention_mask": [], "index": []}
+        for it, index in enumerate(indices):
+            prompt = data["context"][it]
+
+            # no need to apply chat template
             encoded = tokenizer(prompt)
 
             outputs["input_ids"].append(encoded["input_ids"])
