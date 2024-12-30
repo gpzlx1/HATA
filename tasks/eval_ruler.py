@@ -50,13 +50,13 @@ dataset2metric = {
     'niah': {
         'metric_fn': string_match_all,
     },
-    'variable_tracking': {
+    'vt': {
         'metric_fn': string_match_all,
     },
-    'common_words_extraction': {
+    'cwe': {
         'metric_fn': string_match_all,
     },
-    'freq_words_extraction': {
+    'fwe': {
         'metric_fn': string_match_all
     },
     'qa': {
