@@ -27,13 +27,17 @@ class CustomStaticCache(Cache):
             config, "num_key_value_heads", None) is None else
                                     config.num_key_value_heads)
         self.num_heads = config.num_attention_heads
+
         self.layer_devices = []
         for l in range(config.num_hidden_layers):
             if layer_device_map is not None:
                 layer_device = layer_device_map[l]
+                self.layer_devices.append(layer_device)
             else:
                 layer_device = device
-            self.layer_devices.append(layer_device)
+                self.layer_devices.append(layer_device.index)
+        self.unique_devices = set(self.layer_devices)
+        self.rope_metadata = {}
 
     def build_cache(self):
         self.layer_caches = []
@@ -136,18 +140,23 @@ class CustomStaticCache(Cache):
                 self.head_dim)
 
     def alloc(self, q_len):
-        self._rope_indptr = torch.tensor(
-            [i * q_len for i in range(self.curr_batch_size + 1)],
-            dtype=torch.int32,
-            device=self.layer_caches[0].device)
-        self._rope_offsets = torch.full((self.curr_batch_size, ),
-                                        self.seq_len,
-                                        dtype=torch.int32,
-                                        device=self.layer_caches[0].device)
+        for device in self.unique_devices:
+            rope_indptr = torch.tensor(
+                [i * q_len for i in range(self.curr_batch_size + 1)],
+                dtype=torch.int32,
+                device=device)
+            rope_offsets = torch.full((self.curr_batch_size, ),
+                                      self.seq_len,
+                                      dtype=torch.int32,
+                                      device=device)
+            self.rope_metadata[device] = (rope_indptr, rope_offsets)
         self.cur_q_len = q_len
 
-    def get_rope_metadata(self):
-        return self._rope_indptr, self._rope_offsets
+    def get_rope_metadata(self, device=None):
+        if device is None:
+            return self.rope_metadata[self.unique_devices[0]]
+        else:
+            return self.rope_metadata[device.index]
 
     def get_cur_q_len(self):
         return self.cur_q_len

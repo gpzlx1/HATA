@@ -96,7 +96,8 @@ class CustomLlamaRotaryEmbedding(nn.Module):
             self.fn = flashinfer.apply_rope
 
     def forward(self, query_states, key_states, past_key_values):
-        indptr, offsets = past_key_values.get_rope_metadata()
+        indptr, offsets = past_key_values.get_rope_metadata(
+            query_states.device)
         fl_q, fl_k = self.fn(query_states, key_states, indptr, offsets,
                              **self.fn_kwargs)
         return fl_q, fl_k
@@ -208,6 +209,9 @@ class CustomLlamaDecoderLayer(LlamaDecoderLayer):
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor,
                                                  torch.FloatTensor]]]:
 
+        if hidden_states.device.index != torch.cuda.current_device():
+            torch.cuda.set_device(hidden_states.device)
+
         residual = hidden_states
 
         hidden_states = self.input_layernorm(hidden_states)
@@ -228,8 +232,11 @@ class CustomLlamaDecoderLayer(LlamaDecoderLayer):
 
         # Fully Connected
         residual = hidden_states
+
         hidden_states = self.post_attention_layernorm(hidden_states)
+
         hidden_states = self.mlp(hidden_states)
+
         hidden_states = residual + hidden_states
 
         outputs = (hidden_states, )
