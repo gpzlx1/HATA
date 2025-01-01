@@ -197,6 +197,9 @@ class HashStaticCache(CustomStaticCache):
                                              dtype=torch.int32,
                                              device=self.layer_devices[0])
 
+        self.prev_query = None
+        self.curr_query = None
+
     def append_prefill(self, key_states: torch.Tensor,
                        value_states: torch.Tensor, layer_idx: int):
 
@@ -353,6 +356,16 @@ class HashStaticCache(CustomStaticCache):
 
     def get_num_skip_layers(self):
         return self.num_skip_layers
+
+    def register_query(self, query):
+        self.prev_query = self.curr_query
+        self.curr_query = query
+
+    def get_query(self):
+        return self.prev_query
+
+    def update_registered_query(self, query):
+        self.prev_query = query
 
 
 """
