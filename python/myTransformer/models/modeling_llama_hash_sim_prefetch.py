@@ -194,6 +194,8 @@ class CustomLlamaAttention(LlamaFlashAttention2):
                 prev_query = prev_query.view(batch_size, 1, self.num_heads,
                                              self.head_dim)
 
+                past_key_value.check_reuse(prev_query, self.layer_idx)
+
                 torch.cuda.nvtx.range_push("hash encode")
                 encoded_query = past_key_value.decode_encode_hash(
                     prev_query, self.layer_idx)

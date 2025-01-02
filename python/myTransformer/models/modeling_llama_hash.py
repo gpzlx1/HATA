@@ -98,7 +98,8 @@ class CustomLlamaRotaryEmbedding(nn.Module):
             self.fn = flashinfer.apply_rope
 
     def forward(self, query_states, key_states, past_key_values):
-        indptr, offsets = past_key_values.get_rope_metadata()
+        indptr, offsets = past_key_values.get_rope_metadata(
+            query_states.device)
         fl_q, fl_k = self.fn(query_states, key_states, indptr, offsets,
                              **self.fn_kwargs)
         return fl_q, fl_k

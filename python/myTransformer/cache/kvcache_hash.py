@@ -26,6 +26,8 @@ class HashStaticCache(CustomStaticCache):
         num_sink: int = 0,
         num_recent: int = 0,
         max_batch_size: int = 16,
+        reuse_cos_threshold=0.8,
+        reuse_topk=False,
     ) -> None:
         super().__init__(config, device, dtype, max_gpu_cache_memory_size,
                          layer_device_map)
@@ -43,6 +45,9 @@ class HashStaticCache(CustomStaticCache):
         ) * self.num_key_value_heads * self.head_dim * self.dtype.itemsize
 
         self.gqa_size = self.num_heads // self.num_key_value_heads
+
+        self.reuse_cos_threshold = reuse_cos_threshold
+        self.reuse_topk = reuse_topk
 
     def build_cache(self):
 
@@ -200,9 +205,15 @@ class HashStaticCache(CustomStaticCache):
         self.prev_query = None
         self.curr_query = None
 
+        self.layer_cached_query = [None for _ in range(self.num_layers)]
+        self.layer_cached_topk = [None for _ in range(self.num_layers)]
+        self.layer_reuse_mask = [None for _ in range(self.num_layers)]
+
+        self.prefill_len = 0
+
     def append_prefill(self, key_states: torch.Tensor,
                        value_states: torch.Tensor, layer_idx: int):
-
+        self.prefill_len = key_states.shape[1]
         prefill_len = key_states.shape[1]
 
         if layer_idx == self.num_layers - 1:
@@ -342,8 +353,9 @@ class HashStaticCache(CustomStaticCache):
 
         torch.cuda.nvtx.range_push("compute topk")
         if self.sparse_ratio < 1:
-            fetch_num = int(self.layer_hash_seq_lens[layer_idx] *
-                            self.sparse_ratio)
+            # fetch_num = int(self.layer_hash_seq_lens[layer_idx] *
+            #                 self.sparse_ratio)
+            fetch_num = int(self.prefill_len * self.sparse_ratio)
         else:
             fetch_num = min(int(self.sparse_ratio),
                             self.layer_hash_seq_lens[layer_idx])
@@ -351,6 +363,13 @@ class HashStaticCache(CustomStaticCache):
         # topk_indices = torch.topk(score, fetch_num, dim=-1,
         #                           largest=largest).indices.int()
         torch.cuda.nvtx.range_pop()
+
+        if self.reuse_topk:
+            if self.layer_reuse_mask[layer_idx] is not None:
+                topk_indices = torch.where(self.layer_reuse_mask[layer_idx],
+                                           self.layer_cached_topk,
+                                           topk_indices)
+            self.layer_cached_topk = topk_indices
 
         return topk_indices
 
@@ -366,6 +385,28 @@ class HashStaticCache(CustomStaticCache):
 
     def update_registered_query(self, query):
         self.prev_query = query
+
+    def check_reuse(self, query, layer_idx):
+        if self.reuse_topk:
+            if self.layer_cached_query[layer_idx] is not None:
+                cos_sim = torch.cosine_similarity(
+                    self.layer_cached_query[layer_idx], query, dim=-1)
+                cos_sim = cos_sim.view(self.curr_batch_size,
+                                       self.num_key_value_heads,
+                                       self.gqa_size).mean(dim=-1,
+                                                           keepdim=True)
+                self.layer_reuse_mask[
+                    layer_idx] = cos_sim > self.reuse_cos_threshold
+                expand_reuse_mask = self.layer_reuse_mask[layer_idx].expand(
+                    self.curr_batch_size, self.num_key_value_heads,
+                    self.gqa_size).reshape(self.curr_batch_size, 1,
+                                           self.num_heads, 1)
+                self.layer_cached_query[layer_idx] = torch.where(
+                    expand_reuse_mask, self.layer_cached_query[layer_idx],
+                    query)
+
+            else:
+                self.layer_cached_query[layer_idx] = query
 
 
 """
