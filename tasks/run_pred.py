@@ -6,7 +6,13 @@ from tqdm import tqdm
 from functools import partial
 from accelerate import dispatch_model, infer_auto_device_map
 from accelerate.utils import get_balanced_memory
-from dataloader import LongBenchManager, InfiniteBenchManager, NIAHManager, RULERManager
+from dataloader import (
+    LongBenchManager,
+    InfiniteBenchManager,
+    NIAHManager,
+    RULERManager,
+    LongBenchV2Manager,
+)
 
 from utils import DefaultDataCollator
 from llama_utils import (
@@ -45,10 +51,6 @@ def pred_loop_func(args, rank, task_queue, dataset_manager):
 
     args.method = args.method.lower()
     model_load_kwargs = {}
-    if args.method in ["pyramidinfer", "infinigen", "kivi"]:
-        model_load_kwargs["config_file"] = args.config_file
-    elif args.method == "keyformer":
-        model_load_kwargs["model_maxlen"] = args.model_maxlen
 
     model, tokenizer, _, _ = (llama_load_model_and_tokenizer(
         args, args.model_name_or_path, **model_load_kwargs))
@@ -137,7 +139,9 @@ if __name__ == "__main__":
         "--dataset_name",
         type=str,
         default="longbench",
-        choices=["longbench", "infinitebench", "niah", "ruler"],
+        choices=[
+            "longbench", "infinitebench", "niah", "ruler", "longbench-v2"
+        ],
     )
     parser.add_argument("--output_dir", type=str, required=True)
     parser.add_argument("--e",
@@ -183,16 +187,17 @@ if __name__ == "__main__":
             args.dataset_path,
         )
         tasks = dataset_manager.get_dataset_names()
+    elif args.dataset_name == "longbench-v2":
+        dataset_manager = LongBenchV2Manager(
+            args.dataset_path,
+            args.dataset_path,
+        )
+        tasks = dataset_manager.get_dataset_names()
     print("datasets: ", tasks)
 
     # load model and tokenizer
     args.method = args.method.lower()
     model_load_kwargs = {}
-    if args.method in ["pyramidinfer", "infinigen", "kivi"]:
-        model_load_kwargs["config_file"] = args.config_file
-    elif args.method == "keyformer":
-        model_load_kwargs["model_maxlen"] = args.model_maxlen
-
     model, tokenizer, generate_kwargs, apply_chat_template = (
         llama_load_model_and_tokenizer(args, args.model_name_or_path,
                                        **model_load_kwargs))
@@ -237,7 +242,8 @@ if __name__ == "__main__":
         remove_columns = []
         for key in raw_data[0]:
             if key not in [
-                    "length", "all_classes", "answers", "depth_percent"
+                    "length", "all_classes", "answers", "depth_percent",
+                    "difficulty", "domain", "sub_domain", "answer"
             ]:
                 remove_columns.append(key)
         encoded_data = raw_data.map(

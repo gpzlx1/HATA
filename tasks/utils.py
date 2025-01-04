@@ -5,6 +5,7 @@ from typing import List, Dict, Any
 import time
 import numpy as np
 
+
 def get_max_length_in_nested_lists(lst):
     if len(lst) and isinstance(lst[0], list):
         lengths = []
@@ -51,7 +52,7 @@ class DefaultDataCollator:
 
     keys_to_tensorize = {
         "input_ids", "attention_mask", "labels", "position_ids",
-        "token_type_ids", "length", "depth", "index"
+        "token_type_ids", "depth", "index"
     }
 
     def __call__(self, batch_elem: List) -> Dict[str, Any]:
@@ -76,7 +77,6 @@ class DefaultDataCollator:
                                                   pad_token_id,
                                                   self.tokenizer.padding_side)
 
-
             if key in self.keys_to_tensorize:
                 return_batch[key] = torch.tensor(batch_value)
             else:
@@ -86,6 +86,7 @@ class DefaultDataCollator:
 
 
 class TimeRecoder():
+
     def __init__(self, cuda_sync=True):
         self.begins = {}
         self.ends = {}
@@ -113,7 +114,8 @@ class TimeRecoder():
         if self.cuda_sync:
             torch.cuda.synchronize()
         self.ends[name].append(time.time())
-        self.durations[name].append(self.ends[name][-1] - self.begins[name][-1])
+        self.durations[name].append(self.ends[name][-1] -
+                                    self.begins[name][-1])
         self.running_mask[name] = False
 
     def check_all_recoder(self):

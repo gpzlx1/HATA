@@ -84,7 +84,11 @@ datasets_prompt = {
     "code_debug":
     "There is ONLY ONE function in the large project that is deliberately made to include an obvious error. Please find the function that contains the most obvious errors. I will give you four options to narrow your scope. You can inspect the options and think. Eventually, tell me the answer using one single letter (A, B, C, or D).\n\n{context}\n\nWhich funtion has deliberate error?\nA. {OPTION_A}\nB. {OPTION_B}\nC. {OPTION_C}\nD. {OPTION_D}\n\nGive me your answer for the function that has the deliberate and obvious error in A, B, C, or D. Your answer MUST be chosen from one of the four options without any explanation. If you cannot determine answers accurately, you also MUST provide the answer you think is most likely. Absolutely do not say you do not know or you need more information.",
     "longdialogue_qa_eng":
-    "Below is a dialogue script where one random occurrence of a character name is replaced with \"$$MASK$$\", and you should try to guess who that character is.\n\nThe dialogue:\n\n---\n\n{context}\n\n---\n\nEnd of dialogue.\n\nWhich character is most likely \"$$MASK$$\"? Just say the name used by the scriptwriter (before the colon marks) of one single character and nothing else."
+    "Below is a dialogue script where one random occurrence of a character name is replaced with \"$$MASK$$\", and you should try to guess who that character is.\n\nThe dialogue:\n\n---\n\n{context}\n\n---\n\nEnd of dialogue.\n\nWhich character is most likely \"$$MASK$$\"? Just say the name used by the scriptwriter (before the colon marks) of one single character and nothing else.",
+
+    # LongBench-v2
+    "longbench-v2":
+    "Please read the following text and answer the question below.\n\n<text>\n{context}\n</text>\n\nWhat is the correct answer to this question: {question}\nChoices:\n(A) {C_A}\n(B) {C_B}\n(C) {C_C}\n(D) {C_D}\n\nFormat your response as follows: \"The correct answer is (insert answer here)\"."
 }
 
 datasets_maxlen = {
@@ -141,6 +145,9 @@ datasets_maxlen = {
     "fwe": 50,
     "qa_1": 32,
     "qa_2": 32,
+
+    # LongBench-v2
+    "longbench-v2": 128,
 }
 
 datasets_category = {
@@ -344,8 +351,6 @@ class LongBenchManager(DatasetManager):
                 "multifieldqa_en_e",
                 "hotpotqa_e",
                 "2wikimqa_e",
-                "gov_report_e",
-                "multi_news_e",
                 "trec_e",
                 "triviaqa_e",
                 "samsum_e",
@@ -353,6 +358,8 @@ class LongBenchManager(DatasetManager):
                 "passage_retrieval_en_e",
                 "lcc_e",
                 "repobench-p_e",
+                "gov_report_e",
+                "multi_news_e",
             ]
         else:
             datasets = [
@@ -667,6 +674,80 @@ class RULERManager(DatasetManager):
 
             # no need to apply chat template
             encoded = tokenizer(prompt)
+
+            outputs["input_ids"].append(encoded["input_ids"])
+            outputs["attention_mask"].append(encoded["attention_mask"])
+            outputs["index"].append(index)
+
+        return outputs
+
+
+class LongBenchV2Manager(DatasetManager):
+
+    def __init__(
+        self,
+        path,
+        data_dir,
+    ):
+        super().__init__(path, data_dir)
+
+    @staticmethod
+    def get_dataset_names():
+        datasets = [
+            "longbench-v2",
+        ]
+        return datasets
+
+    def get_data(self, dataset_name):
+        data = json.load(
+            open(os.path.join(self.data_dir, 'data.json'),
+                 'r',
+                 encoding='utf-8'))
+        return Dataset.from_list(data)
+
+    def get_dataset_info(self, dataset_name):
+        return (
+            datasets_prompt[dataset_name],
+            datasets_maxlen[dataset_name],
+            None,
+        )
+
+    @staticmethod
+    def process_raw_data(
+        data,
+        indices,
+        tokenizer,
+        apply_chat_template,
+        task,
+        max_length=3500,
+        truncate_from_middle=True,
+    ):
+        outputs = {"input_ids": [], "attention_mask": [], "index": []}
+        for it, index in enumerate(indices):
+            prompt_template = datasets_prompt[task]
+            prompt = prompt_template.format(
+                context=data["context"][it],
+                question=data["question"][it],
+                C_A=data["choice_A"][it],
+                C_B=data["choice_B"][it],
+                C_C=data["choice_C"][it],
+                C_D=data["choice_D"][it],
+            )
+
+            if truncate_from_middle:
+                tokenized_prompt = tokenizer.encode(prompt)
+                if len(tokenized_prompt) > max_length:
+                    half = int(max_length / 2)
+                    prompt = tokenizer.decode(
+                        tokenized_prompt[:half],
+                        skip_special_tokens=True) + tokenizer.decode(
+                            tokenized_prompt[-half:], skip_special_tokens=True)
+            else:
+                tokenized_prompt = tokenizer.encode(prompt)
+                prompt = tokenizer.decode(tokenized_prompt[-max_length:],
+                                          skip_special_tokens=True)
+
+            encoded = apply_chat_template(prompt, tokenizer)
 
             outputs["input_ids"].append(encoded["input_ids"])
             outputs["attention_mask"].append(encoded["attention_mask"])
