@@ -154,9 +154,12 @@ class CustomStaticCache(Cache):
 
     def get_rope_metadata(self, device=None):
         if device is None:
-            return self.rope_metadata[self.unique_devices[0]]
+            return self.rope_metadata[self.layer_devices[0]]
         else:
-            return self.rope_metadata[device.index]
+            if hasattr(device, "index"):
+                return self.rope_metadata[device.index]
+            else:
+                return self.rope_metadata[device]
 
     def get_cur_q_len(self):
         return self.cur_q_len

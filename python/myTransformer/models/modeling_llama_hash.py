@@ -14,6 +14,7 @@ from typing import Optional, Tuple, Union
 from transformers.modeling_outputs import BaseModelOutputWithPast
 
 from ..cache.kvcache_hash import HashStaticCache, prepare_cache_for_generation
+from ..cache.kernels.triton_combine_attn import combine_attention
 from .utils import SiLUAndMul, flash_attnention
 import flashinfer
 from transformers.modeling_flash_attention_utils import _flash_attention_forward
@@ -223,7 +224,8 @@ class CustomLlamaAttention(LlamaFlashAttention2):
             torch.cuda.nvtx.range_pop()
 
             torch.cuda.nvtx.range_push("combine attention")
-            attn_output = KVLib.combine_attention(
+            # attn_output = KVLib.combine_attention(
+            attn_output = combine_attention(
                 middle_attn_output,
                 middle_lse,
                 sink_recent_attn_output,
@@ -269,6 +271,9 @@ class CustomLlamaDecoderLayer(LlamaDecoderLayer):
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor,
                                                  torch.FloatTensor]]]:
+
+        if hidden_states.device.index != torch.cuda.current_device():
+            torch.cuda.set_device(hidden_states.device)
 
         residual = hidden_states
         torch.cuda.nvtx.range_push("layer norm")

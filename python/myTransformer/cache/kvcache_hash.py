@@ -2,7 +2,7 @@ from typing import Dict, Optional, Union, Any
 import torch
 from transformers.configuration_utils import PretrainedConfig
 from transformers.generation.configuration_utils import GenerationConfig
-from .kernels.triton_hash_encode import prefill_hash_encode
+from .kernels.triton_hash_encode import prefill_hash_encode, decode_hash_encode
 from .kvcache_fa import CustomStaticCache
 import KVLib
 import os
@@ -48,6 +48,8 @@ class HashStaticCache(CustomStaticCache):
 
         self.reuse_cos_threshold = reuse_cos_threshold
         self.reuse_topk = reuse_topk
+
+        self.hash_packbit_aux_tensors = {}
 
     def build_cache(self):
 
@@ -139,15 +141,11 @@ class HashStaticCache(CustomStaticCache):
         self.layer_cache_lens = [0 for _ in range(self.num_layers)]
         self.layer_recent_insert_ptr = [0 for _ in range(self.num_layers)]
 
-        self.hash_packbit_aux_tensor = torch.pow(
-            2,
-            torch.arange(0,
-                         32,
-                         1,
-                         dtype=torch.int32,
-                         device=self.layer_devices[0]))
+        for device in self.unique_devices:
+            self.hash_packbit_aux_tensors[device] = torch.pow(
+                2, torch.arange(0, 32, 1, dtype=torch.int32, device=device))
 
-        self.query_code_buffer = None
+        self.query_code_buffers = None
 
     def reset(self, batch_size):
         self.curr_batch_size = batch_size
@@ -166,6 +164,8 @@ class HashStaticCache(CustomStaticCache):
             self.num_key_value_heads * self.curr_batch_size)
         self.max_seq_len = min(kv_max_seq_len, hash_max_seq_len,
                                norm_max_seq_len)
+
+        print(self.max_seq_len)
 
         numel = 2 * batch_size * self.max_seq_len * self.num_key_value_heads * self.head_dim
         hash_numel = batch_size * self.max_seq_len * self.num_key_value_heads * self.hash_dim
@@ -195,12 +195,14 @@ class HashStaticCache(CustomStaticCache):
                 self.layer_norm_caches[i] = self.layer_norm_caches[i].view(
                     batch_size, self.max_seq_len, self.num_key_value_heads)
 
-        self.query_code_buffer = torch.empty(batch_size,
-                                             1,
-                                             self.num_heads,
-                                             self.hash_dim,
-                                             dtype=torch.int32,
-                                             device=self.layer_devices[0])
+        self.query_code_buffers = {}
+        for device in self.unique_devices:
+            self.query_code_buffers[device] = torch.empty(batch_size,
+                                                          1,
+                                                          self.num_heads,
+                                                          self.hash_dim,
+                                                          dtype=torch.int32,
+                                                          device=device)
 
         self.prev_query = None
         self.curr_query = None
@@ -294,10 +296,11 @@ class HashStaticCache(CustomStaticCache):
         assert layer_idx >= self.num_skip_layers, f"hash topk is not enabled in layer{layer_idx}!"
         key = self.layer_caches[layer_idx][
             0, :, :self.layer_cache_lens[layer_idx], :, :]
-        prefill_hash_encode(key, self.hash_weights[layer_idx],
-                            self.layer_hash_caches[layer_idx],
-                            self.layer_norm_caches[layer_idx],
-                            self.hash_packbit_aux_tensor)
+        prefill_hash_encode(
+            key, self.hash_weights[layer_idx],
+            self.layer_hash_caches[layer_idx],
+            self.layer_norm_caches[layer_idx],
+            self.hash_packbit_aux_tensors[self.layer_devices[layer_idx]])
         self.layer_hash_seq_lens[layer_idx] = self.layer_cache_lens[layer_idx]
 
     def decode_encode_hash(self, query, layer_idx):
@@ -306,15 +309,17 @@ class HashStaticCache(CustomStaticCache):
         ptr = self.layer_recent_insert_ptr[layer_idx]
         key = self.layer_sink_recent_caches[layer_idx][0, :, ptr:ptr + 1, :, :]
 
-        KVLib.decode_hash_encode(key, self.hash_weights[layer_idx],
-                                 self.layer_hash_caches[layer_idx],
-                                 self.layer_norm_caches[layer_idx], query,
-                                 self.query_code_buffer,
-                                 self.hash_packbit_aux_tensor,
-                                 self.layer_hash_seq_lens[layer_idx])
+        # KVLib.decode_hash_encode(key, self.hash_weights[layer_idx],
+        decode_hash_encode(
+            key, self.hash_weights[layer_idx],
+            self.layer_hash_caches[layer_idx],
+            self.layer_norm_caches[layer_idx], query,
+            self.query_code_buffers[self.layer_devices[layer_idx]],
+            self.hash_packbit_aux_tensors[self.layer_devices[layer_idx]],
+            self.layer_hash_seq_lens[layer_idx])
         self.layer_hash_seq_lens[layer_idx] += 1
 
-        return self.query_code_buffer
+        return self.query_code_buffers[self.layer_devices[layer_idx]]
 
     def advance_recent_window(self, layer_idx):
         cache_len = self.layer_cache_lens[layer_idx]
@@ -357,8 +362,9 @@ class HashStaticCache(CustomStaticCache):
             #                 self.sparse_ratio)
             fetch_num = int(self.prefill_len * self.sparse_ratio)
         else:
-            fetch_num = min(int(self.sparse_ratio),
-                            self.layer_hash_seq_lens[layer_idx])
+            fetch_num = min(
+                int(self.sparse_ratio) - self.num_recent - self.num_sink,
+                self.layer_hash_seq_lens[layer_idx])
         topk_indices = KVLib.batch_topk(score, fetch_num, largest)
         # topk_indices = torch.topk(score, fetch_num, dim=-1,
         #                           largest=largest).indices.int()
