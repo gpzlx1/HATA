@@ -61,10 +61,13 @@ def pred_loop_func(args, rank, task_queue, dataset_manager):
         for id in device_ids:
             max_memory[id] = torch.cuda.mem_get_info(id)[0]
         map_kwargs = {"max_memory": get_balanced_memory(model, max_memory)}
-        device_map = infer_auto_device_map(
-            model,
-            no_split_module_classes=["CustomLlamaDecoderLayer"],
-            **map_kwargs)
+        device_map = infer_auto_device_map(model,
+                                           no_split_module_classes=[
+                                               "CustomLlamaDecoderLayer",
+                                               "CustomGlmDecoderLayer",
+                                               "CustomQwen2DecoderLayer"
+                                           ],
+                                           **map_kwargs)
         model = dispatch_model(model, device_map=device_map)
     else:
         device = f"cuda:{device_ids[0]}"

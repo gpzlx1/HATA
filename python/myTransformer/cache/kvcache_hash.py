@@ -165,7 +165,7 @@ class HashStaticCache(CustomStaticCache):
         self.max_seq_len = min(kv_max_seq_len, hash_max_seq_len,
                                norm_max_seq_len)
 
-        print(self.max_seq_len)
+        # print(self.max_seq_len)
 
         numel = 2 * batch_size * self.max_seq_len * self.num_key_value_heads * self.head_dim
         hash_numel = batch_size * self.max_seq_len * self.num_key_value_heads * self.hash_dim
@@ -358,9 +358,9 @@ class HashStaticCache(CustomStaticCache):
 
         torch.cuda.nvtx.range_push("compute topk")
         if self.sparse_ratio < 1:
-            # fetch_num = int(self.layer_hash_seq_lens[layer_idx] *
-            #                 self.sparse_ratio)
-            fetch_num = int(self.prefill_len * self.sparse_ratio)
+            fetch_num = min(
+                int(self.seq_len * self.sparse_ratio) - self.num_recent -
+                self.num_sink, self.layer_hash_seq_lens[layer_idx])
         else:
             fetch_num = min(
                 int(self.sparse_ratio) - self.num_recent - self.num_sink,

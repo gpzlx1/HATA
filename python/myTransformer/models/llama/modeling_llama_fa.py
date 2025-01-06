@@ -13,8 +13,8 @@ from transformers.utils import logging
 from typing import Optional, Tuple, Union
 from transformers.modeling_outputs import BaseModelOutputWithPast
 
-from ..cache.kvcache_fa import CustomStaticCache, prepare_cache_for_generation
-from .utils import SiLUAndMul
+from ...cache.kvcache_fa import CustomStaticCache, prepare_cache_for_generation
+from ..utils import SiLUAndMul
 import flashinfer
 from transformers.modeling_flash_attention_utils import _flash_attention_forward
 

@@ -132,7 +132,7 @@ class CustomStaticCache(Cache):
         self.max_seq_len = max_seq_len
 
         numel = 2 * batch_size * max_seq_len * self.num_key_value_heads * self.head_dim
-
+        # print(self.max_seq_len)
         for i in range(self.num_layers):
             self.layer_caches[i] = self.max_layer_caches[i][:numel]
             self.layer_caches[i] = self.layer_caches[i].view(

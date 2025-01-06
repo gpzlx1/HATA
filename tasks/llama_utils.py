@@ -36,6 +36,52 @@ def llama3_apply_chat_template(prompt, tokenizer):
     return encoded
 
 
+def glm_apply_chat_template(prompt, tokenizer):
+    messages = [{"role": "user", "content": f"{prompt}"}]
+    prompt = tokenizer.apply_chat_template(messages,
+                                           add_generation_prompt=True,
+                                           tokenize=False)
+    encoded = tokenizer(prompt)
+    return encoded
+
+
+def qwen2_apply_chat_template(prompt, tokenizer):
+    messages = [{"role": "user", "content": f"{prompt}"}]
+    prompt = tokenizer.apply_chat_template(messages,
+                                           add_generation_prompt=True,
+                                           tokenize=False)
+    encoded = tokenizer(prompt)
+    return encoded
+
+
+def get_model_type_arch(model_name_or_path):
+    if any([
+            x in model_name_or_path.lower()
+            for x in ["llama-2", "llama2", "llama_2"]
+    ]):
+        print("run llama2 model")
+        return "llama2", "llama"
+    elif any([
+            x in model_name_or_path.lower() for x in
+        ["llama-3.1", "llama3.1", "llama_3.1", "llama-3", "llama3", "llama_3"]
+    ]):
+        print("run llama3 model")
+        return "llama3", "llama"
+    elif any([x in model_name_or_path.lower() for x in ["mistral"]]):
+        return "mistral", "mistral"
+    elif any([x in model_name_or_path.lower() for x in ["longchat"]]):
+        print("run longchat model")
+        return "longchat", "llama"
+    elif any([x in model_name_or_path.lower() for x in ["glm"]]):
+        print("run glm model")
+        return "glm", "glm"
+    elif any([x in model_name_or_path.lower() for x in ["qwen2", "qwen2.5"]]):
+        print("run qwen2 model")
+        return "qwen2", "qwen2"
+    else:
+        raise ValueError("Unsupported model name")
+
+
 def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
     model_config = AutoConfig.from_pretrained(model_name_or_path)
     model_config.torch_dtype = torch.float16
@@ -43,27 +89,79 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
 
     method = args.method.lower()
 
+    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path,
+                                              fast_tokenizer=True,
+                                              use_fast=True)
+
+    model_type, model_arch = get_model_type_arch(model_name_or_path)
+
+    # select apply_chat_template
+    if model_type == "llama2":
+        apply_chat_template = llama2_apply_chat_template
+        tokenizer.pad_token = "[PAD]"
+        tokenizer.padding_side = "left"
+
+    elif model_type == "llama3":
+        print("run llama3 model")
+        apply_chat_template = llama3_apply_chat_template
+        tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+        tokenizer.padding_side = "left"
+
+    elif model_type == "mistral":
+        apply_chat_template = mistral_apply_chat_template
+        tokenizer.pad_token = "[PAD]"
+        tokenizer.padding_side = "left"
+
+    elif model_type == "longchat":
+        apply_chat_template = longchat_appy_chat_template
+
+    elif model_type == "glm":
+        apply_chat_template = glm_apply_chat_template
+
+    elif model_type == "qwen2":
+        apply_chat_template = qwen2_apply_chat_template
+
+    else:
+        raise ValueError("Unsupported model name")
+
     if method == "flashinfer":
         generate_config = {
             "page_num": 1000,
             "page_size": 16,
         }
-        from myTransformer.models.modeling_llama_flashinfer import CustomLlamaForCausalLM
-        model = CustomLlamaForCausalLM.from_pretrained(model_name_or_path,
-                                                       config=model_config)
+        if model_arch == "llama":
+            from myTransformer.models.llama.modeling_llama_flashinfer import CustomLlamaForCausalLM
+            model = CustomLlamaForCausalLM.from_pretrained(model_name_or_path,
+                                                           config=model_config)
+        else:
+            raise NotImplementedError(
+                f"{method} not implemented for {model_arch} models!")
 
     elif method == "flashattn":
         generate_config = {
-            "max_gpu_cache_memory": 18 * 1024 * 1024 * 1024,  # 30GB
+            "max_gpu_cache_memory": 7 * 1024 * 1024 * 1024,  # 30GB
         }
         model_config._attn_implementation = "flash_attention_2"
-        from myTransformer.models.modeling_llama_fa import CustomLlamaForCausalLM
-        model = CustomLlamaForCausalLM.from_pretrained(model_name_or_path,
-                                                       config=model_config)
+        if model_arch == "llama":
+            from myTransformer.models.llama.modeling_llama_fa import CustomLlamaForCausalLM
+            model = CustomLlamaForCausalLM.from_pretrained(model_name_or_path,
+                                                           config=model_config)
+        elif model_arch == "glm":
+            from myTransformer.models.glm.modeling_glm_fa import CustomGlmForCausalLM
+            model = CustomGlmForCausalLM.from_pretrained(model_name_or_path,
+                                                         config=model_config)
+        elif model_arch == "qwen2":
+            from myTransformer.models.qwen2.modeling_qwen2_fa import CustomQwen2ForCausalLM
+            model = CustomQwen2ForCausalLM.from_pretrained(model_name_or_path,
+                                                           config=model_config)
+        else:
+            raise NotImplementedError(
+                f"{method} not implemented for {model_arch} models!")
 
     elif method == "hash":
         generate_config = {
-            "max_gpu_cache_memory": 18 * 1024 * 1024 * 1024,
+            "max_gpu_cache_memory": 17 * 1024 * 1024 * 1024,
             "hash_rbits": int(os.environ["RBIT"]),
             "hash_weights_path": os.environ["HASH_WEIGHTS_PATH"],
             "sparse_ratio": float(os.environ["TOPK_RATIO"]),
@@ -71,10 +169,18 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
             "num_sink": int(os.environ["NUM_SINK"]),
             "num_recent": int(os.environ["NUM_RECENT"])
         }
-        model_config._attn_implementation = "sdpa"
-        from myTransformer.models.modeling_llama_hash import CustomLlamaForCausalLM
-        model = CustomLlamaForCausalLM.from_pretrained(model_name_or_path,
-                                                       config=model_config)
+        model_config._attn_implementation = "flash_attention_2"
+        if model_arch == "llama":
+            from myTransformer.models.llama.modeling_llama_hash import CustomLlamaForCausalLM
+            model = CustomLlamaForCausalLM.from_pretrained(model_name_or_path,
+                                                           config=model_config)
+        elif model_arch == "qwen2":
+            from myTransformer.models.qwen2.modeling_qwen2_hash import CustomQwen2ForCausalLM
+            model = CustomQwen2ForCausalLM.from_pretrained(model_name_or_path,
+                                                           config=model_config)
+        else:
+            raise NotImplementedError(
+                f"{method} not implemented for {model_arch} models!")
 
     elif method == "infinigen":
         generate_config = {
@@ -83,47 +189,14 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
             "skewing_matrix_path": os.environ["SKEWING_PATH"],
             "sparse_ratio": float(os.environ["TOPK_RATIO"]),
         }
-        model_config._attn_implementation = "sdpa"
-        from myTransformer.models.modeling_llama_infinigen import CustomLlamaForCausalLM
-        model = CustomLlamaForCausalLM.from_pretrained(model_name_or_path,
-                                                       config=model_config)
-
-    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path,
-                                              fast_tokenizer=True,
-                                              use_fast=True)
-
-    # select apply_chat_template
-    if any([
-            x in model_name_or_path.lower()
-            for x in ["llama-2", "llama2", "llama_2"]
-    ]):
-        print("run llama2 model")
-        apply_chat_template = llama2_apply_chat_template
-        tokenizer.pad_token = "[PAD]"
-        tokenizer.padding_side = "left"
-
-    elif any([
-            x in model_name_or_path.lower() for x in
-        ["llama-3.1", "llama3.1", "llama_3.1", "llama-3", "llama3", "llama_3"]
-    ]):
-        print("run llama3 model")
-        apply_chat_template = llama3_apply_chat_template
-        tokenizer.pad_token = tokenizer.eos_token
-        tokenizer.pad_token_id = tokenizer.eos_token_id
-        tokenizer.padding_side = "left"
-
-    elif any([x in model_name_or_path.lower() for x in ["mistral"]]):
-        print("run mistral model")
-        apply_chat_template = mistral_apply_chat_template
-        tokenizer.pad_token = "[PAD]"
-        tokenizer.padding_side = "left"
-
-    elif any([x in model_name_or_path.lower() for x in ["longchat"]]):
-        print("run longchat model")
-        apply_chat_template = longchat_appy_chat_template
-
-    else:
-        raise ValueError("Unsupported model name")
+        model_config._attn_implementation = "flash_attention_2"
+        if model_arch == "llama":
+            from myTransformer.models.llama.modeling_llama_infinigen import CustomLlamaForCausalLM
+            model = CustomLlamaForCausalLM.from_pretrained(model_name_or_path,
+                                                           config=model_config)
+        else:
+            raise NotImplementedError(
+                f"{method} not implemented for {model_arch} models!")
 
     # unset to avoid some warning
     model.generation_config.temperature = None

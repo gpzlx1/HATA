@@ -40,12 +40,11 @@ class MyModel(torch.nn.Module):
         self.bn = BinaryStochastic()
 
     def forward(self, q_hidden, k_hidden):
-        q_states = (q_hidden @ self.q_weight).view(self.batch_size,
-                                                   self.num_heads,
-                                                   self.head_dim)
-        k_states = (k_hidden @ self.k_weight).view(self.batch_size,
-                                                   self.num_kv_heads, 1,
-                                                   self.head_dim)
+        q_states = self.q_weight(q_hidden).view(self.batch_size,
+                                                self.num_heads, self.head_dim)
+        k_states = self.k_weight(k_hidden).view(self.batch_size,
+                                                self.num_kv_heads, 1,
+                                                self.head_dim)
         k_states = k_states.expand(-1, -1, self.gqa_size,
                                    -1).reshape(-1, self.num_heads,
                                                self.head_dim)
@@ -74,6 +73,11 @@ class MyModel(torch.nn.Module):
 
         ham_weights = ham_weights.view(-1)
 
+        # drop_mask = ~torch.isnan(attn_weights) & ~torch.isinf(
+        #     attn_weights) & ~torch.isneginf(attn_weights)
+        # attn_weights = attn_weights[drop_mask]
+        # ham_weights = ham_weights[drop_mask]
+
         return attn_weights, ham_weights
 
 
@@ -84,12 +88,14 @@ def train_hash_weights(
     num_heads,
     num_kv_heads,
     head_dim,
+    lr=12,
+    dtype=torch.float16,
+    device="cuda",
     with_norm=True,
     batch_size=4000,
     iters=4000,
     schedule_iters=100,
 ):
-    dtype, device = q_weight.dtype, q_weight.device
     q_weight = q_weight.to(dtype)
     k_weight = k_weight.to(dtype)
     hash_weight = torch.normal(0,
@@ -103,7 +109,7 @@ def train_hash_weights(
 
     loss_func = nn.MSELoss()
     # loss_func = nn.MSELoss()
-    optimizer = optim.SGD([hash_weight], lr=12)
+    optimizer = optim.SGD([hash_weight], lr=lr)
     # loss_func = nn.CrossEntropyLoss()
     # optimizer = optim.Adam([hash_weight], lr=0.001)
     scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.998)
@@ -166,17 +172,13 @@ if __name__ == "__main__":
     num_layers = len(model.model.layers)
 
     for l in range(num_layers):
-        q_weights.append(
-            model.model.layers[l].self_attn.q_proj.weight.detach().transpose(
-                0, 1).to("cuda"))
-        k_weights.append(
-            model.model.layers[l].self_attn.k_proj.weight.detach().transpose(
-                0, 1).to("cuda"))
+        q_weights.append(model.model.layers[l].self_attn.q_proj.cuda())
+        k_weights.append(model.model.layers[l].self_attn.k_proj.cuda())
 
     del model
 
-    for l in range(32):
-        if l <= 1:
+    for l in range(num_layers):
+        if l <= 2:
             continue
         print(f"Layer {l:2d}")
         hash_weight = train_hash_weights(q_weights[l],
@@ -185,6 +187,7 @@ if __name__ == "__main__":
                                          num_heads,
                                          num_kv_heads,
                                          head_dim,
+                                         lr=12,
                                          with_norm=args.with_norm)
 
         save_path = os.path.join(args.save_path,

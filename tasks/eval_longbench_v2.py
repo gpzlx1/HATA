@@ -80,9 +80,10 @@ if __name__ == '__main__':
                 dataset = f"{difficulty}-{length}"
                 scores[dataset] = acc[difficulty][length] / count[difficulty][
                     length] * 100
-                print(f"{dataset}: {scores[dataset]:.2f}")
+                count_ = count[difficulty][length]
+                print(f"{dataset}: {scores[dataset]:.2f} ({count_} samples)")
         total = total_acc / total_count * 100
-        print(f"total: {total:.2f}")
+        print(f"total: {total:.2f} ({total_count} samples)")
         scores["total"] = total
     out_path = os.path.join(path, "result.json")
 

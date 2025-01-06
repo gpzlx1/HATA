@@ -1,21 +1,21 @@
 import torch
 import torch.nn as nn
 import transformers
-from transformers.models.llama.modeling_llama import (
-    LlamaForCausalLM,
-    LlamaModel,
-    LlamaMLP,
-    LlamaRMSNorm,
-    LlamaDecoderLayer,
-    LlamaFlashAttention2,
+from transformers.models.qwen2.modeling_qwen2 import (
+    Qwen2ForCausalLM,
+    Qwen2Model,
+    Qwen2MLP,
+    Qwen2RMSNorm,
+    Qwen2DecoderLayer,
+    Qwen2FlashAttention2,
 )
 from transformers.utils import logging
 from typing import Optional, Tuple, Union
 from transformers.modeling_outputs import BaseModelOutputWithPast
 
-from ..cache.kvcache_hash import HashStaticCache, prepare_cache_for_generation
-from ..cache.kernels.triton_combine_attn import combine_attention
-from .utils import SiLUAndMul, flash_attnention
+from ...cache.kvcache_hash import HashStaticCache, prepare_cache_for_generation
+from ...cache.kernels.triton_combine_attn import combine_attention
+from ..utils import SiLUAndMul, flash_attnention
 import flashinfer
 from transformers.modeling_flash_attention_utils import _flash_attention_forward
 import KVLib
@@ -24,21 +24,21 @@ import math
 logger = logging.get_logger(__name__)
 
 
-class CustomerLlamaMLP(LlamaMLP):
+class CustomerQwen2MLP(Qwen2MLP):
 
     def __init__(self, config):
         super().__init__(config)
         self.torch_dtype = config.torch_dtype
-        self.mlp_bias = config.mlp_bias
         self.hidden_act = config.hidden_act
+        self.converted = False
         assert self.hidden_act in ["silu"]
 
     def convert_fusion_exec(self):
-        if not hasattr(self, "gate_up_proj"):
+        if not self.converted:
             device = self.down_proj.weight.device
             self.gate_up_proj = nn.Linear(self.hidden_size,
                                           self.intermediate_size * 2,
-                                          bias=self.mlp_bias,
+                                          bias=False,
                                           dtype=self.torch_dtype,
                                           device=device)
             self.gate_up_proj.weight.data[:self.
@@ -49,6 +49,7 @@ class CustomerLlamaMLP(LlamaMLP):
 
             del self.gate_proj
             del self.up_proj
+            self.converted = True
 
     def forward(self, x):
         self.convert_fusion_exec()
@@ -58,12 +59,12 @@ class CustomerLlamaMLP(LlamaMLP):
         return x
 
 
-class CustomLlamaRotaryEmbedding(nn.Module):
+class CustomQwen2RotaryEmbedding(nn.Module):
 
     def __init__(self, config):
         super().__init__()
         assert config is not None
-        if config.rope_scaling is not None:
+        if "rope_scaling" in config and config.rope_scaling is not None:
             self.rope_type = config.rope_scaling.get(
                 "rope_type", config.rope_scaling.get("type"))
         else:
@@ -106,11 +107,11 @@ class CustomLlamaRotaryEmbedding(nn.Module):
         return fl_q, fl_k
 
 
-class CustomLlamaAttention(LlamaFlashAttention2):
+class CustomQwen2Attention(Qwen2FlashAttention2):
 
     def __init__(self, config, layer_idx):
         super().__init__(config, layer_idx)
-        self.rotary_emb = CustomLlamaRotaryEmbedding(config)
+        self.rotary_emb = CustomQwen2RotaryEmbedding(config)
         self.sacle = 1 / math.sqrt(self.head_dim)
 
     def forward(
@@ -245,16 +246,16 @@ class CustomLlamaAttention(LlamaFlashAttention2):
         return attn_output, None, past_key_value
 
 
-class CustomLlamaDecoderLayer(LlamaDecoderLayer):
+class CustomQwen2DecoderLayer(Qwen2DecoderLayer):
 
     def __init__(self, config, layer_idx):
         super().__init__(config, layer_idx)
-        self.self_attn = CustomLlamaAttention(config, layer_idx)
-        self.input_layernorm = CustomLlamaRMSNorm(config.hidden_size,
+        self.self_attn = CustomQwen2Attention(config, layer_idx)
+        self.input_layernorm = CustomQwen2RMSNorm(config.hidden_size,
                                                   eps=config.rms_norm_eps)
-        self.post_attention_layernorm = CustomLlamaRMSNorm(
+        self.post_attention_layernorm = CustomQwen2RMSNorm(
             config.hidden_size, eps=config.rms_norm_eps)
-        self.mlp = CustomerLlamaMLP(config=config)
+        self.mlp = CustomerQwen2MLP(config=config)
 
     def forward(
         self,
@@ -297,8 +298,11 @@ class CustomLlamaDecoderLayer(LlamaDecoderLayer):
         # Fully Connected
         torch.cuda.nvtx.range_push("ffn")
         residual = hidden_states
+
         hidden_states = self.post_attention_layernorm(hidden_states)
+
         hidden_states = self.mlp(hidden_states)
+
         hidden_states = residual + hidden_states
         torch.cuda.nvtx.range_pop()
 
@@ -313,7 +317,7 @@ class CustomLlamaDecoderLayer(LlamaDecoderLayer):
         return outputs
 
 
-class CustomLlamaRMSNorm(LlamaRMSNorm):
+class CustomQwen2RMSNorm(Qwen2RMSNorm):
 
     def __init__(self, hidden_size, eps=1e-6):
         super().__init__(hidden_size, eps)
@@ -326,15 +330,15 @@ class CustomLlamaRMSNorm(LlamaRMSNorm):
         return output
 
 
-class CustomLlamaModel(LlamaModel):
+class CustomQwen2Model(Qwen2Model):
 
     def __init__(self, config):
         super().__init__(config)
         self.layers = nn.ModuleList([
-            CustomLlamaDecoderLayer(config, layer_idx)
+            CustomQwen2DecoderLayer(config, layer_idx)
             for layer_idx in range(config.num_hidden_layers)
         ])
-        self.norm = CustomLlamaRMSNorm(config.hidden_size,
+        self.norm = CustomQwen2RMSNorm(config.hidden_size,
                                        eps=config.rms_norm_eps)
         self.rotary_emb = None
 
@@ -447,9 +451,9 @@ class CustomLlamaModel(LlamaModel):
         )
 
 
-class CustomLlamaForCausalLM(LlamaForCausalLM):
+class CustomQwen2ForCausalLM(Qwen2ForCausalLM):
 
     def __init__(self, config):
         super().__init__(config)
-        self.model = CustomLlamaModel(config)
+        self.model = CustomQwen2Model(config)
         transformers.generation.utils.GenerationMixin._prepare_cache_for_generation = prepare_cache_for_generation

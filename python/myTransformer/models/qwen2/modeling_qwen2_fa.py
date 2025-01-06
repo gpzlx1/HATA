@@ -1,43 +1,41 @@
 import torch
 import torch.nn as nn
 import transformers
-from transformers.models.llama.modeling_llama import (
-    LlamaForCausalLM,
-    LlamaModel,
-    LlamaMLP,
-    LlamaRMSNorm,
-    LlamaDecoderLayer,
-    LlamaFlashAttention2,
+from transformers.models.qwen2.modeling_qwen2 import (
+    Qwen2ForCausalLM,
+    Qwen2Model,
+    Qwen2MLP,
+    Qwen2RMSNorm,
+    Qwen2DecoderLayer,
+    Qwen2FlashAttention2,
 )
 from transformers.utils import logging
 from typing import Optional, Tuple, Union
 from transformers.modeling_outputs import BaseModelOutputWithPast
-import math
 
-from ..cache.kvcache_infinigen import InfiniGenStaticCache, prepare_cache_for_generation
-from .utils import SiLUAndMul
+from ...cache.kvcache_fa import CustomStaticCache, prepare_cache_for_generation
+from ..utils import SiLUAndMul
 import flashinfer
 from transformers.modeling_flash_attention_utils import _flash_attention_forward
-import KVLib
 
 logger = logging.get_logger(__name__)
 
 
-class CustomerLlamaMLP(LlamaMLP):
+class CustomerQwen2MLP(Qwen2MLP):
 
     def __init__(self, config):
         super().__init__(config)
         self.torch_dtype = config.torch_dtype
-        self.mlp_bias = config.mlp_bias
         self.hidden_act = config.hidden_act
+        self.converted = False
         assert self.hidden_act in ["silu"]
 
     def convert_fusion_exec(self):
-        if not hasattr(self, "gate_up_proj"):
+        if not self.converted:
             device = self.down_proj.weight.device
             self.gate_up_proj = nn.Linear(self.hidden_size,
                                           self.intermediate_size * 2,
-                                          bias=self.mlp_bias,
+                                          bias=False,
                                           dtype=self.torch_dtype,
                                           device=device)
             self.gate_up_proj.weight.data[:self.
@@ -48,6 +46,7 @@ class CustomerLlamaMLP(LlamaMLP):
 
             del self.gate_proj
             del self.up_proj
+            self.converted = True
 
     def forward(self, x):
         self.convert_fusion_exec()
@@ -57,12 +56,12 @@ class CustomerLlamaMLP(LlamaMLP):
         return x
 
 
-class CustomLlamaRotaryEmbedding(nn.Module):
+class CustomQwen2RotaryEmbedding(nn.Module):
 
     def __init__(self, config):
         super().__init__()
         assert config is not None
-        if config.rope_scaling is not None:
+        if "rope_scaling" in config and config.rope_scaling is not None:
             self.rope_type = config.rope_scaling.get(
                 "rope_type", config.rope_scaling.get("type"))
         else:
@@ -105,19 +104,18 @@ class CustomLlamaRotaryEmbedding(nn.Module):
         return fl_q, fl_k
 
 
-class CustomLlamaAttention(LlamaFlashAttention2):
+class CustomQwen2Attention(Qwen2FlashAttention2):
 
     def __init__(self, config, layer_idx):
         super().__init__(config, layer_idx)
-        self.rotary_emb = CustomLlamaRotaryEmbedding(config)
-        self.sacle = 1 / math.sqrt(self.head_dim)
+        self.rotary_emb = CustomQwen2RotaryEmbedding(config)
 
     def forward(
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.LongTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[InfiniGenStaticCache] = None,
+        past_key_value: Optional[CustomStaticCache] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
@@ -129,23 +127,20 @@ class CustomLlamaAttention(LlamaFlashAttention2):
                Optional[Tuple[torch.Tensor]]]:
 
         batch_size = past_key_value.curr_batch_size
+
         q_len = past_key_value.get_cur_q_len()
-
-        is_prefill = q_len > 1
-
         _, hidden_size = hidden_states.size()
 
         query_states = self.q_proj(hidden_states)
-        query_states = query_states.view(-1, self.num_heads, self.head_dim)
-
         key_states = self.k_proj(hidden_states)
-        key_states = key_states.view(-1, self.num_key_value_heads,
-                                     self.head_dim)
-
         value_states = self.v_proj(hidden_states)
 
+        query_states = query_states.view(-1, self.num_heads, self.head_dim)
+        key_states = key_states.view(-1, self.num_key_value_heads,
+                                     self.head_dim)
         query_states, key_states = self.rotary_emb(query_states, key_states,
                                                    past_key_value)
+
         query_states = query_states.view(batch_size, -1, self.num_heads,
                                          self.head_dim)
         key_states = key_states.view(batch_size, -1, self.num_key_value_heads,
@@ -154,106 +149,50 @@ class CustomLlamaAttention(LlamaFlashAttention2):
                                          self.num_key_value_heads,
                                          self.head_dim)
 
-        if self.num_key_value_groups > 1:
-            key_states = key_states.unsqueeze(-2).expand(
-                -1, -1, -1, self.num_key_value_groups, self.head_dim)
-            key_states = key_states.reshape(batch_size, -1, self.num_heads,
-                                            self.head_dim)
-
-            value_states = value_states.unsqueeze(-2).expand(
-                -1, -1, -1, self.num_key_value_groups, self.head_dim)
-            value_states = value_states.reshape(batch_size, -1, self.num_heads,
-                                                self.head_dim)
-        else:
-            key_states = key_states
-            value_states = value_states
-
-        if self.layer_idx >= past_key_value.get_num_skip_layers():
-            query_states = past_key_value.skew(query_states, self.layer_idx)
-            key_states = past_key_value.skew(key_states, self.layer_idx)
-
-        value_states = past_key_value.append(value_states,
-                                             self.layer_idx,
-                                             type="value",
-                                             inc_seq_len=False)
         key_states = past_key_value.append(key_states,
                                            self.layer_idx,
                                            type="key",
-                                           inc_seq_len=True)
+                                           inc_seq_len=False)
+        value_states = past_key_value.append(value_states,
+                                             self.layer_idx,
+                                             type="value",
+                                             inc_seq_len=True)
 
-        if is_prefill:
-            if self.layer_idx >= past_key_value.get_num_skip_layers():
-                past_key_value.prefill_encode_partial(query_states, key_states,
-                                                      self.layer_idx)
-            attn_output = _flash_attention_forward(
-                query_states,
-                key_states,
-                value_states,
-                attention_mask,
-                q_len,
-                position_ids=position_ids,
-                dropout=0,
-                sliding_window=getattr(self, "sliding_window", None),
-                use_top_left_mask=self._flash_attn_uses_top_left_mask,
-                is_causal=self.is_causal,
-            )
-        else:
-            if self.layer_idx >= past_key_value.get_num_skip_layers():
-                prev_query = past_key_value.get_query()
-                prev_query = self.q_proj(prev_query)
-                prev_query = prev_query.view(-1, self.num_heads, self.head_dim)
-                prev_query, _ = self.rotary_emb(prev_query, prev_query,
-                                                past_key_value)
-                prev_query = prev_query.view(batch_size, 1, self.num_heads,
-                                             self.head_dim)
-                prev_query = past_key_value.skew(prev_query, self.layer_idx)
-                past_key_value.decode_encode_partial_key(
-                    key_states, self.layer_idx)
-                prev_query = past_key_value.decode_encode_partial_query(
-                    prev_query, self.layer_idx)
-                topk_indices = past_key_value.compute_topk(
-                    prev_query, self.layer_idx)
-
-                attn_output, _ = KVLib.flash_index_decode(
-                    query_states, key_states, value_states, topk_indices,
-                    self.sacle)
-            else:
-                attn_output = _flash_attention_forward(
-                    query_states,
-                    key_states,
-                    value_states,
-                    attention_mask,
-                    q_len,
-                    position_ids=position_ids,
-                    dropout=0,
-                    sliding_window=getattr(self, "sliding_window", None),
-                    use_top_left_mask=self._flash_attn_uses_top_left_mask,
-                    is_causal=self.is_causal,
-                )
-
+        attn_output = _flash_attention_forward(
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
+            q_len,
+            position_ids=position_ids,
+            dropout=0,
+            sliding_window=getattr(self, "sliding_window", None),
+            use_top_left_mask=self._flash_attn_uses_top_left_mask,
+            is_causal=self.is_causal,
+        )
         attn_output = attn_output.view(-1, hidden_size)
         attn_output = self.o_proj(attn_output)
 
         return attn_output, None, past_key_value
 
 
-class CustomLlamaDecoderLayer(LlamaDecoderLayer):
+class CustomQwen2DecoderLayer(Qwen2DecoderLayer):
 
     def __init__(self, config, layer_idx):
         super().__init__(config, layer_idx)
-        self.self_attn = CustomLlamaAttention(config, layer_idx)
-        self.input_layernorm = CustomLlamaRMSNorm(config.hidden_size,
+        self.self_attn = CustomQwen2Attention(config, layer_idx)
+        self.input_layernorm = CustomQwen2RMSNorm(config.hidden_size,
                                                   eps=config.rms_norm_eps)
-        self.post_attention_layernorm = CustomLlamaRMSNorm(
+        self.post_attention_layernorm = CustomQwen2RMSNorm(
             config.hidden_size, eps=config.rms_norm_eps)
-        self.mlp = CustomerLlamaMLP(config=config)
+        self.mlp = CustomerQwen2MLP(config=config)
 
     def forward(
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[InfiniGenStaticCache] = None,
+        past_key_value: Optional[CustomStaticCache] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
@@ -264,17 +203,12 @@ class CustomLlamaDecoderLayer(LlamaDecoderLayer):
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor,
                                                  torch.FloatTensor]]]:
 
+        if hidden_states.device.index != torch.cuda.current_device():
+            torch.cuda.set_device(hidden_states.device)
+
         residual = hidden_states
 
         hidden_states = self.input_layernorm(hidden_states)
-
-        if past_key_value.get_cur_q_len() == 1:
-            # record current layer input
-            if self.self_attn.layer_idx >= past_key_value.get_num_skip_layers(
-            ) - 1 and self.self_attn.layer_idx < past_key_value.num_layers - 1:
-                past_key_value.register_query(hidden_states)
-            else:
-                past_key_value.register_query(None)
 
         # Self Attention
         hidden_states, self_attn_weights, present_key_value = self.self_attn(
@@ -292,8 +226,11 @@ class CustomLlamaDecoderLayer(LlamaDecoderLayer):
 
         # Fully Connected
         residual = hidden_states
+
         hidden_states = self.post_attention_layernorm(hidden_states)
+
         hidden_states = self.mlp(hidden_states)
+
         hidden_states = residual + hidden_states
 
         outputs = (hidden_states, )
@@ -307,7 +244,7 @@ class CustomLlamaDecoderLayer(LlamaDecoderLayer):
         return outputs
 
 
-class CustomLlamaRMSNorm(LlamaRMSNorm):
+class CustomQwen2RMSNorm(Qwen2RMSNorm):
 
     def __init__(self, hidden_size, eps=1e-6):
         super().__init__(hidden_size, eps)
@@ -320,15 +257,15 @@ class CustomLlamaRMSNorm(LlamaRMSNorm):
         return output
 
 
-class CustomLlamaModel(LlamaModel):
+class CustomQwen2Model(Qwen2Model):
 
     def __init__(self, config):
         super().__init__(config)
         self.layers = nn.ModuleList([
-            CustomLlamaDecoderLayer(config, layer_idx)
+            CustomQwen2DecoderLayer(config, layer_idx)
             for layer_idx in range(config.num_hidden_layers)
         ])
-        self.norm = CustomLlamaRMSNorm(config.hidden_size,
+        self.norm = CustomQwen2RMSNorm(config.hidden_size,
                                        eps=config.rms_norm_eps)
         self.rotary_emb = None
 
@@ -337,7 +274,7 @@ class CustomLlamaModel(LlamaModel):
         input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[InfiniGenStaticCache] = None,
+        past_key_values: Optional[CustomStaticCache] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
@@ -441,9 +378,9 @@ class CustomLlamaModel(LlamaModel):
         )
 
 
-class CustomLlamaForCausalLM(LlamaForCausalLM):
+class CustomQwen2ForCausalLM(Qwen2ForCausalLM):
 
     def __init__(self, config):
         super().__init__(config)
-        self.model = CustomLlamaModel(config)
+        self.model = CustomQwen2Model(config)
         transformers.generation.utils.GenerationMixin._prepare_cache_for_generation = prepare_cache_for_generation
