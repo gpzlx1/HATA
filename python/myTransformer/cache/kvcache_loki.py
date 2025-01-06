@@ -139,9 +139,9 @@ class LokiStaticCache(CustomStaticCache):
             fetch_num = int(self.seq_len * self.sparse_ratio)
         else:
             fetch_num = min(int(self.sparse_ratio), self.seq_len)
-        topk_indices = KVLib.batch_topk(score, fetch_num, True)
-        # topk_indices = torch.topk(score, fetch_num, dim=-1,
-        #                           largest=True).indices.int()
+        # topk_indices = KVLib.batch_topk(score, fetch_num, True)
+        topk_indices = torch.topk(score, fetch_num, dim=-1,
+                                  largest=True).indices.int()
         torch.cuda.nvtx.range_pop()
 
         return topk_indices

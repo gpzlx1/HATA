@@ -182,6 +182,36 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
             raise NotImplementedError(
                 f"{method} not implemented for {model_arch} models!")
 
+    elif method == "loki":
+        generate_config = {
+            "max_gpu_cache_memory": 5 * 1024 * 1024 * 1024,
+            "num_channels": int(os.environ["RCHANNEL"]),
+            "sparse_ratio": float(os.environ["TOPK_RATIO"]),
+            "aux_data_path": os.environ["PCA_PATH"]
+        }
+        model_config._attn_implementation = "flash_attention_2"
+        if model_arch == "llama":
+            from myTransformer.models.llama.modeling_llama_loki import CustomLlamaForCausalLM
+            model = CustomLlamaForCausalLM.from_pretrained(model_name_or_path,
+                                                           config=model_config)
+        else:
+            raise NotImplementedError(
+                f"{method} not implemented for {model_arch} models!")
+
+    elif method == "topk":
+        generate_config = {
+            "max_gpu_cache_memory": 5 * 1024 * 1024 * 1024,
+            "sparse_ratio": float(os.environ["TOPK_RATIO"]),
+        }
+        model_config._attn_implementation = "flash_attention_2"
+        if model_arch == "llama":
+            from myTransformer.models.llama.modeling_llama_topk import CustomLlamaForCausalLM
+            model = CustomLlamaForCausalLM.from_pretrained(model_name_or_path,
+                                                           config=model_config)
+        else:
+            raise NotImplementedError(
+                f"{method} not implemented for {model_arch} models!")
+
     elif method == "infinigen":
         generate_config = {
             "max_gpu_cache_memory": 19 * 1024 * 1024 * 1024,
