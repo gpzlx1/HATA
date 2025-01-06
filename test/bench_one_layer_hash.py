@@ -2,10 +2,8 @@ import torch
 from transformers import LlamaForCausalLM, AutoTokenizer, AutoConfig
 import time
 import numpy as np
-import myTransformer
 import os
-from transformers.generation.configuration_utils import GenerationConfig
-from myTransformer.models.modeling_llama_hash import CustomLlamaDecoderLayer
+from myTransformer.models.llama.modeling_llama_hash import CustomLlamaDecoderLayer
 from myTransformer.cache.kvcache_hash import HashStaticCache
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -107,15 +105,13 @@ def bench(layer: CustomLlamaDecoderLayer,
 
 
 if __name__ == "__main__":
-    device = "cuda:7"
+    device = "cuda:3"
     torch.cuda.set_device(device)
 
     decode_step = 200
-    hash_rbits = 128
-    sparse_ratio = 0.03
 
-    model_path = "/nfs/shared_LLM_model/lmsys/longchat-7b-v1.5-32k"
-    # model_path = "/nfs/shared_LLM_model/meta-llama/Meta-Llama-3.1-8B-Instruct"
+    # model_path = "/nfs/shared_LLM_model/lmsys/longchat-7b-v1.5-32k"
+    model_path = "/nfs/shared_LLM_model/meta-llama/Meta-Llama-3.1-8B-Instruct"
     tokenizer = AutoTokenizer.from_pretrained(model_path)
 
     config = AutoConfig.from_pretrained(model_path)
@@ -123,16 +119,14 @@ if __name__ == "__main__":
     config.torch_dtype = torch.float16
     config._attn_implementation = "flash_attention_2"
 
-    from myTransformer.models.modeling_llama_hash import CustomLlamaDecoderLayer
-    from myTransformer.cache.kvcache_hash import HashStaticCache
     layer = CustomLlamaDecoderLayer(config,
                                     0).eval().to(torch.float16).to(device)
     kvcache = HashStaticCache(config=config,
-                              hash_rbits=hash_rbits,
+                              hash_rbits=128,
                               device=device,
                               max_gpu_cache_memory_size=30 * 1024 * 1024 *
                               1024,
-                              sparse_ratio=sparse_ratio,
+                              sparse_ratio=512,
                               num_skip_layers=0,
                               hash_weights_path=None,
                               use_norm=True,

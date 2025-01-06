@@ -34,7 +34,7 @@ class CustomStaticCache(Cache):
                 layer_device = layer_device_map[l]
                 self.layer_devices.append(layer_device)
             else:
-                layer_device = device
+                layer_device = torch.device(device)
                 self.layer_devices.append(layer_device.index)
         self.unique_devices = set(self.layer_devices)
         self.rope_metadata = {}
@@ -49,7 +49,6 @@ class CustomStaticCache(Cache):
 
         for l in range(self.num_layers):
             layer_device = self.layer_devices[l]
-            self.layer_devices.append(layer_device)
             self.layer_caches.append(None)
             self.max_layer_caches.append(
                 torch.zeros((numel, ), dtype=self.dtype, device=layer_device))

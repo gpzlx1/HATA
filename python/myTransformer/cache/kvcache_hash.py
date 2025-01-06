@@ -97,7 +97,6 @@ class HashStaticCache(CustomStaticCache):
 
         for l in range(self.num_layers):
             layer_device = self.layer_devices[l]
-            self.layer_devices.append(layer_device)
 
             self.layer_caches.append(None)
             self.layer_hash_caches.append(None)

@@ -70,7 +70,6 @@ class InfiniGenStaticCache(CustomStaticCache):
 
         for l in range(self.num_layers):
             layer_device = self.layer_devices[l]
-            self.layer_devices.append(layer_device)
 
             self.layer_caches.append(None)
             self.layer_partial_caches.append(None)
