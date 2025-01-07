@@ -14,3 +14,4 @@ __pycache__
 *.pdf
 tasks/preds
 *.nsys-rep
+.cache

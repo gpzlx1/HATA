@@ -1,6 +1,3 @@
 [submodule "3rdparty/cutlass"]
 	path = 3rdparty/cutlass
 	url = https://github.com/NVIDIA/cutlass.git
-[submodule "3rdparty/ggml"]
-	path = 3rdparty/ggml
-	url = https://github.com/xzwj1699/ggml.git

@@ -30,6 +30,7 @@ class CMakeBuild(build_ext):
         cmake_args = [
             f"-DCMAKE_LIBRARY_OUTPUT_DIRECTORY={extdir}{os.sep}",
             f"-DPYTHON_EXECUTABLE={sys.executable}",
+            "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
         ]
         build_args = []
 

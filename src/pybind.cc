@@ -49,16 +49,7 @@ PYBIND11_MODULE(KVLib, m) {
       .def("combine_attention", &kvlib::combine_attention)
       .def("kvcache_append", &kvlib::KVCacheAppend)
       .def("kvcache_append2", &kvlib::KVCacheAppend2)
-      .def("create_tensor", &create_tensor);
-
-  py::class_<kvlib::CpuAttention>(m, "CpuAttention")
-      .def(py::init<size_t, int>(), py::arg("mem_size"), py::arg("num_threads"),
-           "Initialize CpuAttention with memory size, dimensions, and shape")
-      .def("Attention", &kvlib::CpuAttention::Attention,
-           "Compute Attention in CPU")
-      .def("SparseAttention", &kvlib::CpuAttention::SparseAttention,
-           "Compute Sparse Attention in CPU")
-      .def("SparseAttentionWithMeta",
-           &kvlib::CpuAttention::SparseAttentionWithMeta,
-           "Compute Sparse Attention in CPU with LSE exported");
+      .def("create_tensor", &create_tensor)
+      .def("cpu_attn", &kvlib::CPUAttention)
+      .def("cpu_sparse_attn", &kvlib::CPUSparseAttention);
 }

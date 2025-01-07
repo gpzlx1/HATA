@@ -40,6 +40,7 @@ set(pybind11_DIR ${PYBIND_CMAKE_DIR})
 find_package(pybind11 REQUIRED)
 
 # set flag
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_FLAGS "-Wall -Wextra")
 set(CMAKE_CXX_FLAGS_DEBUG "-g")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -fopenmp")
@@ -51,13 +52,7 @@ if(OPENMP_FOUND)
 endif(OPENMP_FOUND)
 message(STATUS "Build with OpenMP")
 
-# Set ggml
-include_directories("3rdparty/ggml/include")
-add_subdirectory("3rdparty/ggml")
-list(APPEND KVLib_EXTERNAL_LIB ggml)
-
 # Define our library target
-# include_directories(src)
 file(GLOB KVLib_SRC
   src/*.c
   src/*.cc
@@ -75,6 +70,8 @@ set_target_properties(KVLib PROPERTIES CUDA_STANDARD 17)
 set_target_properties(KVLib PROPERTIES POSITION_INDEPENDENT_CODE ON)
 TARGET_COMPILE_OPTIONS(
   KVLib PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda>)
+target_compile_options(KVLib PRIVATE -mavx512f)
+target_compile_options(KVLib PRIVATE -mf16c)
 
 # Enable C++17
 target_compile_features(KVLib PRIVATE cxx_std_17)
