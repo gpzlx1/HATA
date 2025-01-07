@@ -2,6 +2,7 @@ import torch
 import myTransformer
 from functools import partial
 from myTransformer.cache.kernels.triton_hash_encode import hash_encode
+import KVLib as capi
 
 torch.cuda.set_device(6)
 torch.manual_seed(42)
@@ -47,12 +48,12 @@ def encode(key, query, hash_weight):
     return key_code, query_code
 
 
-b = 2
+b = 1
 rbit = 128
 h = 32
 hk = 8
 gqa = h // hk
-s = 128000
+s = 32000
 key = torch.randn(b, s, hk, 128).to(torch.float16).cuda()
 query = torch.randn(b, 1, h, 128).to(torch.float16).cuda()
 
@@ -74,27 +75,31 @@ print(torch_output)
 print(torch_output.shape)
 
 key_code, query_code = encode(key, query, hash_weight)
-
 torch.cuda.synchronize()
 
-my_output2 = myTransformer.capi.hamming_score(key_code,
-                                              query_code,
-                                              key_norms,
-                                              rbit,
-                                              s,
-                                              use_key_norm=True)
+my_output2 = capi.hamming_score(key_code,
+                                query_code,
+                                key_norms,
+                                rbit,
+                                s,
+                                sink=0,
+                                recent=0,
+                                use_key_norm=True)
 print(my_output2)
+# print(my_output2[0, 0, :])
 print(my_output2.shape)
 
 print((my_output2 - torch_output).abs().max())
 
 latency = bench(
-    partial(myTransformer.capi.hamming_score,
+    partial(capi.hamming_score,
             key_code,
             query_code,
             key_norms,
             rbit,
             s,
+            sink=0,
+            recent=0,
             use_key_norm=True))
 
 size = key_code.numel() * key_code.dtype.itemsize + query_code.numel(

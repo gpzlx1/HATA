@@ -1,10 +1,10 @@
 import torch
-from transformers import LlamaForCausalLM, AutoTokenizer, AutoConfig
+from transformers import AutoTokenizer, AutoConfig
 import time
 import numpy as np
 import os
-from myTransformer.models.llama.modeling_llama_hash import CustomLlamaDecoderLayer
-from myTransformer.cache.kvcache_hash import HashStaticCache
+from myTransformer.models.llama.modeling_llama_hash_all_on_gpu import CustomLlamaDecoderLayer
+from myTransformer.cache.kvcache_hash_all_on_gpu import HashStaticCache
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -105,7 +105,7 @@ def bench(layer: CustomLlamaDecoderLayer,
 
 
 if __name__ == "__main__":
-    device = "cuda:3"
+    device = torch.device("cuda", 7)
     torch.cuda.set_device(device)
 
     decode_step = 200

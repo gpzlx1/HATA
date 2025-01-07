@@ -10,7 +10,8 @@ namespace kvlib {
 torch::Tensor HammingScoreCUDA(torch::Tensor& key_codes,
                                torch::Tensor& query_code,
                                torch::Tensor& key_norms, int32_t rbit,
-                               int32_t seq_len, bool use_key_norm = false);
+                               int32_t seq_len, int32_t sink = 0,
+                               int32_t recent = 0, bool use_key_norm = false);
 torch::Tensor TopkCUDA(torch::Tensor& data, int32_t k, bool largest);
 void decode_hash_encode(torch::Tensor key_data, torch::Tensor hash_weights,
                         torch::Tensor key_code_output,
