@@ -83,17 +83,22 @@ def get_model_type_arch(model_name_or_path):
 
 
 def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
-    model_config = AutoConfig.from_pretrained(model_name_or_path)
+    model_config = AutoConfig.from_pretrained(model_name_or_path,
+                                              trust_remote_code=True)
     model_config.torch_dtype = torch.float16
     generate_kwarg = {}
 
     method = args.method.lower()
 
-    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path,
-                                              fast_tokenizer=True,
-                                              use_fast=True)
-
     model_type, model_arch = get_model_type_arch(model_name_or_path)
+
+    if model_arch == "glm":
+        tokenizer = AutoTokenizer.from_pretrained(model_name_or_path,
+                                                  trust_remote_code=True)
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(model_name_or_path,
+                                                  fast_tokenizer=True,
+                                                  use_fast=True)
 
     # select apply_chat_template
     if model_type == "llama2":
@@ -148,9 +153,11 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
             model = CustomLlamaForCausalLM.from_pretrained(model_name_or_path,
                                                            config=model_config)
         elif model_arch == "glm":
-            from myTransformer.models.glm.modeling_glm_fa import CustomGlmForCausalLM
-            model = CustomGlmForCausalLM.from_pretrained(model_name_or_path,
-                                                         config=model_config)
+            from myTransformer.models.glm.modeling_glm_fa_v2 import CustomGlmForCausalLM
+            model = CustomGlmForCausalLM.from_pretrained(
+                model_name_or_path,
+                config=model_config,
+                trust_remote_code=True)
         elif model_arch == "qwen2":
             from myTransformer.models.qwen2.modeling_qwen2_fa import CustomQwen2ForCausalLM
             model = CustomQwen2ForCausalLM.from_pretrained(model_name_or_path,
@@ -161,7 +168,7 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
 
     elif method == "hash":
         generate_config = {
-            "max_gpu_cache_memory": 17 * 1024 * 1024 * 1024,
+            "max_gpu_cache_memory": 7 * 1024 * 1024 * 1024,
             "hash_rbits": int(os.environ["RBIT"]),
             "hash_weights_path": os.environ["HASH_WEIGHTS_PATH"],
             "sparse_ratio": float(os.environ["TOPK_RATIO"]),
@@ -174,6 +181,12 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
             from myTransformer.models.llama.modeling_llama_hash import CustomLlamaForCausalLM
             model = CustomLlamaForCausalLM.from_pretrained(model_name_or_path,
                                                            config=model_config)
+        elif model_arch == "glm":
+            from myTransformer.models.glm.modeling_glm_hash_v2 import CustomGlmForCausalLM
+            model = CustomGlmForCausalLM.from_pretrained(
+                model_name_or_path,
+                config=model_config,
+                trust_remote_code=True)
         elif model_arch == "qwen2":
             from myTransformer.models.qwen2.modeling_qwen2_hash import CustomQwen2ForCausalLM
             model = CustomQwen2ForCausalLM.from_pretrained(model_name_or_path,
@@ -197,7 +210,7 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
         else:
             raise NotImplementedError(
                 f"{method} not implemented for {model_arch} models!")
-        
+
     elif method == "sparq":
         generate_config = {
             "max_gpu_cache_memory": 5 * 1024 * 1024 * 1024,

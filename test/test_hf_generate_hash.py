@@ -45,15 +45,16 @@ if __name__ == "__main__":
     # model_path = "/nfs/shared_LLM_model/meta-llama/Llama-2-7b-chat-hf"
     # model_path = "/nfs/shared_LLM_model/lmsys/longchat-7b-v1.5-32k"
     # model_path = "/nfs/shared_LLM_model/meta-llama/Meta-Llama-3.1-8B-Instruct"
-    # model_path = "/nfs/shared_LLM_model/THUDM/glm-4-9b-chat-hf"
-    model_path = "/nfs/shared_LLM_model/Qwen/Qwen2.5-7B-Instruct"
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    model_path = "/nfs/shared_LLM_model/THUDM/glm-4-9b-chat"
+    # model_path = "/nfs/shared_LLM_model/Qwen/Qwen2.5-7B-Instruct"
+    tokenizer = AutoTokenizer.from_pretrained(model_path,
+                                              trust_remote_code=True)
 
-    from myTransformer.models.llama.modeling_llama_fa import CustomLlamaForCausalLM
-    from myTransformer.models.glm.modeling_glm_fa import CustomGlmForCausalLM
+    from myTransformer.models.llama.modeling_llama_hash import CustomLlamaForCausalLM
+    from myTransformer.models.glm.modeling_glm_hash_v2 import CustomGlmForCausalLM
     from myTransformer.models.qwen2.modeling_qwen2_fa import CustomQwen2ForCausalLM
 
-    config = AutoConfig.from_pretrained(model_path)
+    config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
     config.torch_dtype = torch.float16
     config._attn_implementation = "flash_attention_2"
     print(config)
@@ -61,7 +62,8 @@ if __name__ == "__main__":
     if "glm" in model_path.lower():
         model = CustomGlmForCausalLM.from_pretrained(model_path,
                                                      torch_dtype=torch.float16,
-                                                     config=config)
+                                                     config=config,
+                                                     trust_remote_code=True)
     elif "qwen" in model_path.lower():
         model = CustomQwen2ForCausalLM.from_pretrained(
             model_path, torch_dtype=torch.float16, config=config)
@@ -79,7 +81,8 @@ if __name__ == "__main__":
         "hash_rbits": 128,
         "hash_weights_path":
         # "/root/workspace/myoffloading/model_weights/longchat-7b-v1.5-32k-128",
-        "/root/workspace/myoffloading/model_weights/Meta-Llama-3.1-8B-Instruct-128",
+        # "/root/workspace/myoffloading/model_weights/Meta-Llama-3.1-8B-Instruct-128",
+        None,
         "sparse_ratio": 512,
         "use_norm": True,
         "num_sink": 64,

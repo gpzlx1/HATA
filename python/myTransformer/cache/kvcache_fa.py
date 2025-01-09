@@ -21,15 +21,23 @@ class CustomStaticCache(Cache):
         self.max_gpu_cache_memory_size = max_gpu_cache_memory_size
         self.dtype = config.torch_dtype
         self.num_layers = config.num_hidden_layers
-        self.head_dim = (config.head_dim if hasattr(config, "head_dim") else
-                         config.hidden_size // config.num_attention_heads)
-        self.num_key_value_heads = (config.num_attention_heads if getattr(
-            config, "num_key_value_heads", None) is None else
-                                    config.num_key_value_heads)
+        if hasattr(config, "head_dim"):
+            self.head_dim = config.head_dim
+        elif hasattr(config, "kv_channels"):
+            self.head_dim = config.kv_channels
+        else:
+            self.head_dim = config.hidden_size // config.num_attention_heads
+        if hasattr(config, "num_key_value_heads"):
+            self.num_key_value_heads = config.num_key_value_heads
+        elif hasattr(config, "multi_query_group_num"):
+            self.num_key_value_heads = config.multi_query_group_num
+        else:
+            self.num_key_value_heads = config.num_attention_heads
+
         self.num_heads = config.num_attention_heads
 
         self.layer_devices = []
-        for l in range(config.num_hidden_layers):
+        for l in range(self.num_layers):
             if layer_device_map is not None:
                 layer_device = layer_device_map[l]
                 self.layer_devices.append(layer_device)

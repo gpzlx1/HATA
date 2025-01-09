@@ -264,6 +264,7 @@ class HashStaticCache(CustomStaticCache):
         topk_indices = torch.topk(score, fetch_num, dim=-1,
                                   largest=largest).indices.int()
         # topk_indices = KVLib.batch_topk(score, fetch_num, largest)
+
         torch.cuda.nvtx.range_pop()
 
         return topk_indices

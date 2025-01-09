@@ -29,6 +29,9 @@
     } else if ((val) == 4) {                    \
       constexpr int NumKVHead = 4;              \
       { __VA_ARGS__ }                           \
+    } else if ((val) == 2) {                    \
+      constexpr int NumKVHead = 2;              \
+      { __VA_ARGS__ }                           \
     } else {                                    \
       LOG(FATAL) << "NumKVHead is not support"; \
     }                                           \
@@ -69,6 +72,7 @@ __global__ void HammingScoreKernel(void* __restrict__ keys_ptr,
   constexpr int32_t BLOCK_M = (ELEMS / NumChunk / NumKVHead);
   constexpr int32_t ELEMS_IN_TOKEN = NumChunk * NumKVHead;
   constexpr int32_t KVGroup = NumHead / NumKVHead;
+
   const half RBIT = (half)((int32_t)sizeof(T) * 8 * NumChunk);
 
   const int32_t tid = threadIdx.x;
