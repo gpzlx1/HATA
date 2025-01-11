@@ -142,8 +142,8 @@ inline void set_ggml_f32_to_f16_table() {
     is_first_call = false;
   }
 }
-
-inline void prefetch_4_cacheline(const char *ptr, const int prefetch_level) {
+template <int prefetch_level>
+static inline void prefetch_4_cacheline(const char *ptr) {
   __builtin_prefetch(ptr, 0, prefetch_level);
   __builtin_prefetch(ptr + 1 * CACHE_LINE_SIZE, 0, prefetch_level);
   __builtin_prefetch(ptr + 2 * CACHE_LINE_SIZE, 0, prefetch_level);
@@ -355,9 +355,9 @@ void ggml_compute_forward_flash_attn_ext_by_thread(CPUAttnParams &params,
       const ggml_fp16_t *k_data = k_data_base_ptr + ic * params.k_seq_stride;
       const ggml_fp16_t *v_data = v_data_base_ptr + ic * params.v_seq_stride;
 
-      const int cur_prefetch_level = 3;
-      prefetch_4_cacheline((char *)k_data, cur_prefetch_level);
-      prefetch_4_cacheline((char *)v_data, cur_prefetch_level);
+      constexpr int cur_prefetch_level = 3;
+      prefetch_4_cacheline<cur_prefetch_level>((char *)k_data);
+      prefetch_4_cacheline<cur_prefetch_level>((char *)v_data);
 
       float s;  // KQ value
       ggml_vec_dot_f16(params.head_dim, &s, k_data, Q_q);
@@ -469,8 +469,8 @@ void ggml_compute_forward_sparse_flash_attn_ext_by_thread(
           selected_ics[k] = *selected_ic_ptr;
           ggml_fp16_t *next_k_data =
               k_data_base_ptr + selected_ics[k] * params.k_seq_stride;
-          const int prefetch_level = 1;
-          prefetch_4_cacheline((char *)next_k_data, prefetch_level);
+          constexpr int prefetch_level = 1;
+          prefetch_4_cacheline<prefetch_level>((char *)next_k_data);
         }
       }
 
@@ -483,8 +483,8 @@ void ggml_compute_forward_sparse_flash_attn_ext_by_thread(
             k_data_base_ptr +
             selected_ics[prefetch_index % total_stage] * params.k_seq_stride;
 
-        const int prefetch_level = 1;
-        prefetch_4_cacheline((char *)next_k_data, prefetch_level);
+        constexpr int prefetch_level = 1;
+        prefetch_4_cacheline<prefetch_level>((char *)next_k_data);
       }
 
       int32_t selected_ic = selected_ics[ic % total_stage];
@@ -492,9 +492,9 @@ void ggml_compute_forward_sparse_flash_attn_ext_by_thread(
       ggml_fp16_t *k_data = k_data_base_ptr + selected_ic * params.k_seq_stride;
       ggml_fp16_t *v_data = v_data_base_ptr + selected_ic * params.v_seq_stride;
 
-      const int cur_prefetch_level = 3;
-      prefetch_4_cacheline((char *)k_data, cur_prefetch_level);
-      prefetch_4_cacheline((char *)v_data, cur_prefetch_level);
+      constexpr int cur_prefetch_level = 3;
+      prefetch_4_cacheline<cur_prefetch_level>((char *)k_data);
+      prefetch_4_cacheline<cur_prefetch_level>((char *)v_data);
 
       float s;  // KQ value
       ggml_vec_dot_f16(params.head_dim, &s, k_data, Q_q);
@@ -503,8 +503,8 @@ void ggml_compute_forward_sparse_flash_attn_ext_by_thread(
         for (int k = 0; k < stage; k++) {
           ggml_fp16_t *next_v_data =
               v_data_base_ptr + selected_ics[k] * params.v_seq_stride;
-          const int prefetch_level = 1;
-          prefetch_4_cacheline((char *)next_v_data, prefetch_level);
+          constexpr int prefetch_level = 1;
+          prefetch_4_cacheline<prefetch_level>((char *)next_v_data);
         }
       }
 
@@ -514,7 +514,7 @@ void ggml_compute_forward_sparse_flash_attn_ext_by_thread(
             v_data_base_ptr +
             selected_ics[prefetch_index % total_stage] * params.v_seq_stride;
         const int prefetch_level = 1;
-        prefetch_4_cacheline((char *)next_v_data, prefetch_level);
+        prefetch_4_cacheline<prefetch_level>((char *)next_v_data);
       }
 
       s = s * params.scale;  // scale KQ value
