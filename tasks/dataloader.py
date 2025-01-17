@@ -226,6 +226,20 @@ def load_processed_infinitebench_dataset(path, data_name):
     return Dataset.from_list(ret)
 
 
+def load_longbench_dataset(path, data_name):
+    fin = open(os.path.join(path, f"data/{data_name}.jsonl"),
+               "r",
+               encoding="utf-8")
+    lines = fin.readlines()
+    fin.close()
+    ret = []
+    for line in lines:
+        eg = json.loads(line)
+        ret.append(eg)
+
+    return Dataset.from_list(ret)
+
+
 def load_ruler_dataset(path, data_name):
     fin = open(os.path.join(path, f"{data_name}/validation.jsonl"),
                "r",
@@ -265,7 +279,7 @@ class DatasetManager:
 
     def write_results(self, ouput_dir, indices, preds, raw_data, dataset_name):
         if not os.path.exists(ouput_dir):
-            os.makedirs(ouput_dir)
+            os.makedirs(ouput_dir, exist_ok=True)
         with open(os.path.join(ouput_dir, f"{dataset_name}.jsonl"),
                   "w",
                   encoding="utf-8") as f:
@@ -282,7 +296,7 @@ class DatasetManager:
 
     def write_one_result(self, output_dir, pred, json_obj, dataset_name):
         if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
+            os.makedirs(output_dir, exist_ok=True)
         with open(os.path.join(output_dir, f"{dataset_name}.jsonl"),
                   "a",
                   encoding="utf-8") as f:
@@ -298,7 +312,7 @@ class DatasetManager:
     def write_one_result_v2(self, output_dir, pred, answer, all_classes,
                             length, dataset_name):
         if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
+            os.makedirs(output_dir, exist_ok=True)
         with open(os.path.join(output_dir, f"{dataset_name}.jsonl"),
                   "a",
                   encoding="utf-8") as f:
@@ -314,7 +328,7 @@ class DatasetManager:
     def write_one_result_v3(self, output_dir, pred, index, out_info,
                             dataset_name):
         if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
+            os.makedirs(output_dir, exist_ok=True)
         with open(os.path.join(output_dir, f"{dataset_name}.jsonl"),
                   "a",
                   encoding="utf-8") as f:
@@ -389,10 +403,7 @@ class LongBenchManager(DatasetManager):
         return datasets
 
     def get_data(self, dataset_name):
-        data = load_dataset(self.path,
-                            dataset_name,
-                            data_dir=self.data_dir,
-                            split=self.split)
+        data = load_longbench_dataset(self.path, dataset_name)
         return data
 
     def get_dataset_info(self, dataset_name):

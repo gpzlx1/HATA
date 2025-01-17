@@ -145,7 +145,8 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
 
     elif method == "flashattn":
         generate_config = {
-            "max_gpu_cache_memory": 7 * 1024 * 1024 * 1024,  # 30GB
+            "max_gpu_cache_memory":
+            float(os.environ["CUDA_MEM"]) * 1024 * 1024 * 1024,  # 30GB
         }
         model_config._attn_implementation = "flash_attention_2"
         if model_arch == "llama":
@@ -168,21 +169,24 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
 
     elif method == "hash":
         generate_config = {
-            "max_gpu_cache_memory": 7 * 1024 * 1024 * 1024,
+            "max_gpu_cache_memory":
+            float(os.environ["CUDA_MEM"]) * 1024 * 1024 * 1024,
             "hash_rbits": int(os.environ["RBIT"]),
             "hash_weights_path": os.environ["HASH_WEIGHTS_PATH"],
+            # "hash_weights_path": None,
             "sparse_ratio": float(os.environ["TOPK_RATIO"]),
             "use_norm": int(os.environ["USE_NORM"]) > 0,
+            "with_bias": False,
             "num_sink": int(os.environ["NUM_SINK"]),
             "num_recent": int(os.environ["NUM_RECENT"])
         }
         model_config._attn_implementation = "flash_attention_2"
         if model_arch == "llama":
-            from myTransformer.models.llama.modeling_llama_hash import CustomLlamaForCausalLM
+            from myTransformer.models.llama.modeling_llama_multi_hash import CustomLlamaForCausalLM
             model = CustomLlamaForCausalLM.from_pretrained(model_name_or_path,
                                                            config=model_config)
         elif model_arch == "glm":
-            from myTransformer.models.glm.modeling_glm_hash_v2 import CustomGlmForCausalLM
+            from myTransformer.models.glm.modeling_glm_multi_hash_v2 import CustomGlmForCausalLM
             model = CustomGlmForCausalLM.from_pretrained(
                 model_name_or_path,
                 config=model_config,
@@ -197,7 +201,8 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
 
     elif method == "loki":
         generate_config = {
-            "max_gpu_cache_memory": 5 * 1024 * 1024 * 1024,
+            "max_gpu_cache_memory":
+            float(os.environ["CUDA_MEM"]) * 1024 * 1024 * 1024,
             "num_channels": int(os.environ["RCHANNEL"]),
             "sparse_ratio": float(os.environ["TOPK_RATIO"]),
             "aux_data_path": os.environ["PCA_PATH"]
@@ -207,13 +212,20 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
             from myTransformer.models.llama.modeling_llama_loki import CustomLlamaForCausalLM
             model = CustomLlamaForCausalLM.from_pretrained(model_name_or_path,
                                                            config=model_config)
+        elif model_arch == "glm":
+            from myTransformer.models.glm.modeling_glm_loki_v2 import CustomGlmForCausalLM
+            model = CustomGlmForCausalLM.from_pretrained(
+                model_name_or_path,
+                config=model_config,
+                trust_remote_code=True)
         else:
             raise NotImplementedError(
                 f"{method} not implemented for {model_arch} models!")
 
     elif method == "sparq":
         generate_config = {
-            "max_gpu_cache_memory": 5 * 1024 * 1024 * 1024,
+            "max_gpu_cache_memory":
+            float(os.environ["CUDA_MEM"]) * 1024 * 1024 * 1024,
             "r_channel": int(os.environ["RCHANNEL"]),
             "sparse_ratio": float(os.environ["TOPK_RATIO"]),
         }
@@ -222,13 +234,20 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
             from myTransformer.models.llama.modeling_llama_sparq import CustomLlamaForCausalLM
             model = CustomLlamaForCausalLM.from_pretrained(model_name_or_path,
                                                            config=model_config)
+        elif model_arch == "glm":
+            from myTransformer.models.glm.modeling_glm_sparq_v2 import CustomGlmForCausalLM
+            model = CustomGlmForCausalLM.from_pretrained(
+                model_name_or_path,
+                config=model_config,
+                trust_remote_code=True)
         else:
             raise NotImplementedError(
                 f"{method} not implemented for {model_arch} models!")
 
     elif method == "topk":
         generate_config = {
-            "max_gpu_cache_memory": 5 * 1024 * 1024 * 1024,
+            "max_gpu_cache_memory":
+            float(os.environ["CUDA_MEM"]) * 1024 * 1024 * 1024,
             "sparse_ratio": float(os.environ["TOPK_RATIO"]),
         }
         model_config._attn_implementation = "flash_attention_2"
@@ -236,6 +255,12 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
             from myTransformer.models.llama.modeling_llama_topk import CustomLlamaForCausalLM
             model = CustomLlamaForCausalLM.from_pretrained(model_name_or_path,
                                                            config=model_config)
+        elif model_arch == "glm":
+            from myTransformer.models.glm.modeling_glm_topk_v2 import CustomGlmForCausalLM
+            model = CustomGlmForCausalLM.from_pretrained(
+                model_name_or_path,
+                config=model_config,
+                trust_remote_code=True)
         else:
             raise NotImplementedError(
                 f"{method} not implemented for {model_arch} models!")

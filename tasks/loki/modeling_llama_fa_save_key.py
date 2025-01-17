@@ -140,16 +140,9 @@ class CustomLlamaAttention(LlamaFlashAttention2):
         if q_len > 1:
             self.pre_rotary_key = key_states
 
-        if batch_size == 1:
-            value_states = past_key_value.value_proj_and_append(
-                hidden_states,
-                self.v_proj.weight.T,
-                self.layer_idx,
-                inc_seq_len=False)
-        else:
-            value_states = self.v_proj(hidden_states)
-            value_states = value_states.view(-1, self.num_key_value_heads,
-                                             self.head_dim)
+        value_states = self.v_proj(hidden_states)
+        value_states = value_states.view(-1, self.num_key_value_heads,
+                                         self.head_dim)
 
         query_states, key_states = self.rotary_emb(query_states, key_states,
                                                    past_key_value)
@@ -159,19 +152,13 @@ class CustomLlamaAttention(LlamaFlashAttention2):
         if q_len > 1:
             self.post_rotary_key = key_states
 
-        if batch_size > 1:
-            value_states = past_key_value.append(value_states,
-                                                 self.layer_idx,
-                                                 type="value",
-                                                 inc_seq_len=False)
-        key_states = past_key_value.append(key_states,
-                                           self.layer_idx,
-                                           type="key",
-                                           inc_seq_len=True)
-
         batch_size = past_key_value.curr_batch_size
         query_states = query_states.view(batch_size, -1, self.num_heads,
                                          self.head_dim)
+        key_states = key_states.view(batch_size, -1, self.num_key_value_heads,
+                                     self.head_dim)
+        value_states = key_states.view(batch_size, -1,
+                                       self.num_key_value_heads, self.head_dim)
 
         attn_output = _flash_attention_forward(
             query_states,

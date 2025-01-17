@@ -4,7 +4,6 @@ import torch
 import os
 import argparse
 from transformers import AutoConfig, AutoTokenizer
-from modeling_llama_fa_save_key import CustomLlamaForCausalLM
 from transformers.generation.configuration_utils import GenerationConfig
 from functools import partial
 from sklearn.decomposition import PCA
@@ -13,6 +12,7 @@ from accelerate.utils import get_balanced_memory
 
 sys.path.append("../")
 from dataloader import RULERManager
+from llama_utils import get_model_type_arch
 
 
 def set_args(parser: argparse.ArgumentParser):
@@ -23,7 +23,8 @@ def set_args(parser: argparse.ArgumentParser):
     parser.add_argument(
         "--dataset_path",
         type=str,
-        default="/nfs/shared_LLM_dataset/RULER/Meta-Llama-3.1-8B-Instruct/32K")
+        default="/nfs/shared_LLM_dataset/RULER/Meta-Llama-3.1-8B-Instruct/128K"
+    )
     parser.add_argument("--num_samples", type=int, default=10)
     parser.add_argument("--key_type", type=str, default="pre_rotary")
     parser.add_argument("--max_context_length", type=int, default=32768)
@@ -36,23 +37,34 @@ if __name__ == "__main__":
     set_args(parser)
     args = parser.parse_args()
 
-    tokenizer = AutoTokenizer.from_pretrained(args.model,
-                                              fast_tokenizer=True,
-                                              use_fast=True)
-    if any([
-            x in args.model.lower() for x in
-        ["llama-3.1", "llama3.1", "llama_3.1", "llama-3", "llama3", "llama_3"]
-    ]):
-        print("run llama3 model")
+    model_name, model_arch = get_model_type_arch(args.model)
+
+    if model_arch == "glm":
+        tokenizer = AutoTokenizer.from_pretrained(args.model,
+                                                  trust_remote_code=True)
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(args.model,
+                                                  fast_tokenizer=True,
+                                                  use_fast=True)
+
+    model_config = AutoConfig.from_pretrained(args.model,
+                                              trust_remote_code=True)
+    model_config._attn_implementation = "flash_attention_2"
+    model_config.torch_dtype = torch.float16
+    if model_arch == "glm":
+        from modeling_glm_fa_save_key import CustomGlmForCausalLM
+        model = CustomGlmForCausalLM.from_pretrained(args.model,
+                                                     torch_dtype=torch.float16,
+                                                     config=model_config,
+                                                     trust_remote_code=True)
+    elif model_arch == "llama":
+        from modeling_llama_fa_save_key import CustomLlamaForCausalLM
+        model = CustomLlamaForCausalLM.from_pretrained(args.model,
+                                                       config=model_config)
         tokenizer.pad_token = tokenizer.eos_token
         tokenizer.pad_token_id = tokenizer.eos_token_id
         tokenizer.padding_side = "left"
 
-    model_config = AutoConfig.from_pretrained(args.model)
-    model_config._attn_implementation = "flash_attention_2"
-    model_config.torch_dtype = torch.float16
-    model = CustomLlamaForCausalLM.from_pretrained(args.model,
-                                                   config=model_config)
     model.generation_config.temperature = None
     model.generation_config.top_p = None
     model.generation_config.pad_token_id = tokenizer.pad_token_id
@@ -64,10 +76,12 @@ if __name__ == "__main__":
         for id in device_ids:
             max_memory[id] = torch.cuda.mem_get_info(id)[0]
         map_kwargs = {"max_memory": get_balanced_memory(model, max_memory)}
-        device_map = infer_auto_device_map(
-            model,
-            no_split_module_classes=["CustomLlamaDecoderLayer"],
-            **map_kwargs)
+        device_map = infer_auto_device_map(model,
+                                           no_split_module_classes=[
+                                               "CustomLlamaDecoderLayer",
+                                               "CustomGLMBlock",
+                                           ],
+                                           **map_kwargs)
         model = dispatch_model(model, device_map=device_map)
     else:
         model = model.to(device_ids[0])
@@ -76,7 +90,7 @@ if __name__ == "__main__":
         args.dataset_path,
         args.dataset_path,
     )
-    task = dataset_manager.get_dataset_names()[-1]
+    task = dataset_manager.get_dataset_names()[-2]
     print(f"Get key tensors on {task} dataset from RULER")
     _, dataset_maxlen, _ = dataset_manager.get_dataset_info(task)
     raw_data = dataset_manager.get_data(task)
@@ -99,14 +113,17 @@ if __name__ == "__main__":
     )
 
     generation_kwargs = {
-        "max_gpu_cache_memory": 16 * 1024 * 1024 * 1024,
+        "max_gpu_cache_memory": 0.0 * 1024 * 1024 * 1024,
     }
     generation_config = GenerationConfig(**generation_kwargs)
 
     num_layers = model_config.num_hidden_layers
-    num_heads = (model_config.num_attention_heads if getattr(
-        model_config, "num_key_value_heads", None) is None else
-                 model_config.num_key_value_heads)
+    if model_arch == "glm":
+        num_heads = model_config.multi_query_group_num
+    else:
+        num_heads = (model_config.num_attention_heads if getattr(
+            model_config, "num_key_value_heads", None) is None else
+                     model_config.num_key_value_heads)
     head_dim = (model_config.head_dim if hasattr(model_config, "head_dim") else
                 model_config.hidden_size // model_config.num_attention_heads)
     key_tensors = [[] for _ in range(num_layers)]
@@ -128,18 +145,32 @@ if __name__ == "__main__":
                        max_new_tokens=dataset_maxlen,
                        generation_config=generation_config)
         for l in range(num_layers):
-            if args.key_type == "pre_rotary":
-                seq_len = min(
-                    model.model.layers[l].self_attn.pre_rotary_key.shape[0],
-                    seq_len)
-                key_tensors[l].append(
-                    model.model.layers[l].self_attn.pre_rotary_key.cpu())
+            if model_arch == "glm":
+                if args.key_type == "pre_rotary":
+                    seq_len = min(
+                        model.transformer.encoder.layers[l].self_attention.
+                        pre_rotary_key.shape[0], seq_len)
+                    key_tensors[l].append(model.transformer.encoder.layers[l].
+                                          self_attention.pre_rotary_key.cpu())
+                else:
+                    seq_len = min(
+                        model.transformer.encoder.layers[l].self_attention.
+                        post_rotary_key.shape[0], seq_len)
+                    key_tensors[l].append(model.transformer.encoder.layers[l].
+                                          self_attention.post_rotary_key.cpu())
             else:
-                seq_len = min(
-                    model.model.layers[l].self_attn.post_rotary_key.shape[0],
-                    seq_len)
-                key_tensors[l].append(
-                    model.model.layers[l].self_attn.post_rotary_key.cpu())
+                if args.key_type == "pre_rotary":
+                    seq_len = min(
+                        model.model.layers[l].self_attn.pre_rotary_key.
+                        shape[0], seq_len)
+                    key_tensors[l].append(
+                        model.model.layers[l].self_attn.pre_rotary_key.cpu())
+                else:
+                    seq_len = min(
+                        model.model.layers[l].self_attn.post_rotary_key.
+                        shape[0], seq_len)
+                    key_tensors[l].append(
+                        model.model.layers[l].self_attn.post_rotary_key.cpu())
 
     del model
 

@@ -2,7 +2,7 @@ from typing import Dict, Optional, Union, Any
 import torch
 from transformers.configuration_utils import PretrainedConfig
 from transformers.generation.configuration_utils import GenerationConfig
-from .kernels.triton_hash_encode import prefill_hash_encode, decode_hash_encode
+from .kernels.triton_hash_encode import prefill_multi_hash_encode, decode_multi_hash_encode
 from .kvcache_fa import CustomStaticCache
 import KVLib
 import os
@@ -111,7 +111,8 @@ class HashStaticCache(CustomStaticCache):
                                 dtype=self.dtype,
                                 device=layer_device))
                 if self.hash_weights_path is None:
-                    hash_weight = torch.randn((self.head_dim, self.hash_rbits),
+                    hash_weight = torch.randn((self.num_key_value_heads,
+                                               self.head_dim, self.hash_rbits),
                                               dtype=self.dtype,
                                               device=layer_device)
                 else:
@@ -213,7 +214,7 @@ class HashStaticCache(CustomStaticCache):
         assert layer_idx >= self.num_skip_layers, f"hash topk is not enabled in layer{layer_idx}!"
         key = self.layer_caches[layer_idx][
             0, :, :self.layer_cache_lens[layer_idx], :, :]
-        prefill_hash_encode(
+        prefill_multi_hash_encode(
             key, self.hash_weights[layer_idx],
             self.layer_hash_caches[layer_idx],
             self.layer_norm_caches[layer_idx],
@@ -226,7 +227,7 @@ class HashStaticCache(CustomStaticCache):
                                            self.seq_len:self.seq_len + 1, :, :]
 
         # KVLib.decode_hash_encode(
-        decode_hash_encode(
+        decode_multi_hash_encode(
             key, self.hash_weights[layer_idx],
             self.layer_hash_caches[layer_idx],
             self.layer_norm_caches[layer_idx], query,

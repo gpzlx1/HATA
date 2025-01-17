@@ -13,7 +13,7 @@ from transformers.utils import logging
 from typing import Optional, Tuple, Union
 from transformers.modeling_outputs import BaseModelOutputWithPast
 
-from ...cache.kvcache_hash import HashStaticCache, prepare_cache_for_generation
+from ...cache.kvcache_hash_old import HashStaticCache, prepare_cache_for_generation
 from ...cache.kernels.triton_combine_attn import combine_attention
 from ..utils import SiLUAndMul, flash_attnention
 import flashinfer

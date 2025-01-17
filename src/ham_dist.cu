@@ -13,6 +13,15 @@
     } else if ((val) == 28) {                 \
       constexpr int NumHead = 28;             \
       { __VA_ARGS__ }                         \
+    } else if ((val) == 8) {                 \
+      constexpr int NumHead = 8;             \
+      { __VA_ARGS__ }                         \
+    } else if ((val) == 4) {                 \
+      constexpr int NumHead = 4;             \
+      { __VA_ARGS__ }                         \
+    } else if ((val) == 2) {                 \
+      constexpr int NumHead = 2;             \
+      { __VA_ARGS__ }                         \
     } else {                                  \
       LOG(FATAL) << "NumHead is not support"; \
     }                                         \
@@ -152,8 +161,10 @@ __global__ void HammingScoreKernel(void* __restrict__ keys_ptr,
       if (USE_KEY_NORM) {
         sum = half(KVGroup) - half(2.) * sum / RBIT;
         sum = sum * smem_key_norm[m_id * NumKVHead + kv_head_id];
+        *_o_ptr = is_sink_or_recent ? half(65504) : sum;
+      } else {
+        *_o_ptr = is_sink_or_recent ? half(0.) : sum;
       }
-      *_o_ptr = is_sink_or_recent ? half(65504) : sum;
     }
   }
 }

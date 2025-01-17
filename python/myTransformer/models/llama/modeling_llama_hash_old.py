@@ -14,6 +14,7 @@ from typing import Optional, Tuple, Union
 from transformers.modeling_outputs import BaseModelOutputWithPast
 
 from ...cache.kvcache_hash_old import HashStaticCache, prepare_cache_for_generation
+from ...cache.kernels.triton_combine_attn import combine_attention
 from ..utils import SiLUAndMul, flash_attnention
 import flashinfer
 from transformers.modeling_flash_attention_utils import _flash_attention_forward
@@ -186,19 +187,9 @@ class CustomLlamaAttention(LlamaFlashAttention2):
             ) = past_key_value.get_middle_cache(self.layer_idx)
 
             if self.layer_idx >= past_key_value.get_num_skip_layers():
-                prev_query = past_key_value.get_query()
-                prev_query = self.q_proj(prev_query)
-                prev_query = prev_query.view(-1, self.num_heads, self.head_dim)
-                prev_query, _ = self.rotary_emb(prev_query, prev_query,
-                                                past_key_value)
-                prev_query = prev_query.view(batch_size, 1, self.num_heads,
-                                             self.head_dim)
-
-                past_key_value.check_reuse(prev_query, self.layer_idx)
-
                 torch.cuda.nvtx.range_push("hash encode")
                 encoded_query = past_key_value.decode_encode_hash(
-                    prev_query, self.layer_idx)
+                    query_states, self.layer_idx)
                 torch.cuda.nvtx.range_pop()
 
                 torch.cuda.nvtx.range_push("hash select")
@@ -233,7 +224,8 @@ class CustomLlamaAttention(LlamaFlashAttention2):
             torch.cuda.nvtx.range_pop()
 
             torch.cuda.nvtx.range_push("combine attention")
-            attn_output = KVLib.combine_attention(
+            # attn_output = KVLib.combine_attention(
+            attn_output = combine_attention(
                 middle_attn_output,
                 middle_lse,
                 sink_recent_attn_output,
@@ -280,23 +272,10 @@ class CustomLlamaDecoderLayer(LlamaDecoderLayer):
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor,
                                                  torch.FloatTensor]]]:
 
+        if hidden_states.device.index != torch.cuda.current_device():
+            torch.cuda.set_device(hidden_states.device)
+
         residual = hidden_states
-
-        if past_key_value.get_cur_q_len() == 1:
-            # record current layer input
-            if self.self_attn.layer_idx >= past_key_value.get_num_skip_layers(
-            ) - 1 and self.self_attn.layer_idx < past_key_value.num_layers - 1:
-                past_key_value.register_query(hidden_states)
-            else:
-                past_key_value.register_query(None)
-
-            # apply current layernorm on input recorded by previous layer
-            if self.self_attn.layer_idx >= past_key_value.get_num_skip_layers(
-            ):
-                prev_hidden_states = past_key_value.get_query()
-                prev_hidden_states = self.input_layernorm(prev_hidden_states)
-                past_key_value.update_registered_query(prev_hidden_states)
-
         torch.cuda.nvtx.range_push("layer norm")
         hidden_states = self.input_layernorm(hidden_states)
         torch.cuda.nvtx.range_pop()
