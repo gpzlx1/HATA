@@ -148,10 +148,9 @@ class CustomStaticCache(Cache):
 
     def alloc(self, q_len):
         for device in self.unique_devices:
-            rope_indptr = torch.tensor(
-                [i * q_len for i in range(self.curr_batch_size + 1)],
-                dtype=torch.int32,
-                device=device)
+            rope_indptr = torch.arange(
+                (self.curr_batch_size + 1), dtype=torch.int32,
+                device=device) * q_len
             rope_offsets = torch.full((self.curr_batch_size, ),
                                       self.seq_len,
                                       dtype=torch.int32,

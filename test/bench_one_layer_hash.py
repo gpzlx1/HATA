@@ -3,7 +3,7 @@ from transformers import AutoTokenizer, AutoConfig
 import time
 import numpy as np
 import os
-from myTransformer.models.llama.modeling_llama_hash_all_on_gpu import CustomLlamaDecoderLayer
+from myTransformer.models.llama.modeling_llama_hash import CustomLlamaDecoderLayer
 from myTransformer.cache.kvcache_hash_all_on_gpu import HashStaticCache
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -72,35 +72,30 @@ def bench(layer: CustomLlamaDecoderLayer,
                 for _ in range(decode_step)
             ]
 
-            # torch.cuda.synchronize()
+            torch.cuda.synchronize()
             tic = time.time()
-
             kvcache.alloc(prefill_len)
             layer(prefill_hidden, None, prefill_position_ids, kvcache, False,
                   True, None, None)
-
-            # torch.cuda.synchronize()
+            torch.cuda.synchronize()
             toc = time.time()
             prefill_time.append(toc - tic)
 
+            torch.cuda.synchronize()
+            tic = time.time()
             kvcache.alloc(1)
-
             for j in range(decode_step):
-                # torch.cuda.synchronize()
-                tic = time.time()
-
                 layer(decode_hidden[i], None, None, kvcache, False, True, None,
                       None)
-
-                # torch.cuda.synchronize()
-                toc = time.time()
-                decode_time.append(toc - tic)
+            torch.cuda.synchronize()
+            toc = time.time()
+            decode_time.append(toc - tic)
 
     print(
-        f"prefill time cost [{prefill_len}]: {np.mean(prefill_time) * 1000} ms"
+        f"prefill time cost [{prefill_len}]: {np.mean(prefill_time[2:]) * 1000} ms"
     )
     print(
-        f"decode time cost [{prefill_len}, {decode_step}]: {np.mean(decode_time) * 1000} ms"
+        f"decode time cost [{prefill_len}, {decode_step}]: {np.mean(decode_time[2:]) * 1000} ms"
     )
 
 
@@ -136,5 +131,5 @@ if __name__ == "__main__":
 
     for batch_size in [1]:
         print(f"batch_size: {batch_size}")
-        for prefill_len in [96000]:
+        for prefill_len in [16000]:
             bench(layer, kvcache, batch_size, prefill_len, decode_step, device)
