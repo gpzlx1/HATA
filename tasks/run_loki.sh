@@ -26,9 +26,9 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 RCHANNEL=${RCHANNEL} TOPK_RATIO=${LONGBENCH
     --model_maxlen 60000 \
     --dataset_path ${LONGBENCH_PATH} \
     --dataset_name longbench \
-    --output_dir ./preds/sparq/longbenche_gt4K_full-Meta-Llama-3.1-8B-Instruct-channel${RCHANNEL}-top${LONGBENCH_BUDGET}-sink${NUM_SINK}-recent${NUM_RECENT}/ \
-    --method sparq --write_in_time --mp_num 8 --pp_num 1 --e --min_seq_len 4096
-python eval_longbench_infinitebench.py --model preds/sparq/longbenche_gt4K_full-Meta-Llama-3.1-8B-Instruct-channel${RCHANNEL}-top${LONGBENCH_BUDGET}-sink${NUM_SINK}-recent${NUM_RECENT}
+    --output_dir ./preds/loki/longbenche_gt4K_full-Meta-Llama-3.1-8B-Instruct-channel${RCHANNEL}-top${LONGBENCH_BUDGET}-sink${NUM_SINK}-recent${NUM_RECENT}/ \
+    --method loki --write_in_time --mp_num 8 --pp_num 1 --e --min_seq_len 4096
+python eval_longbench_infinitebench.py --model preds/loki/longbenche_gt4K_full-Meta-Llama-3.1-8B-Instruct-channel${RCHANNEL}-top${LONGBENCH_BUDGET}-sink${NUM_SINK}-recent${NUM_RECENT}
 
 # longbenche-Full-glm4
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 RCHANNEL=${RCHANNEL} TOPK_RATIO=${LONGBENCH_BUDGET} PCA_PATH=${GLM4_PCA_PATH} CUDA_MEM=6.0 NUM_RECENT=${NUM_RECENT} NUM_SINK=${NUM_SINK} python3 run_pred.py \
@@ -37,9 +37,9 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 RCHANNEL=${RCHANNEL} TOPK_RATIO=${LONGBENCH
     --model_maxlen 60000 \
     --dataset_path ${LONGBENCH_PATH} \
     --dataset_name longbench \
-    --output_dir ./preds/sparq/longbenche_gt4K_full-glm-4-9b-chat-channel${RCHANNEL}-top${LONGBENCH_BUDGET}-sink${NUM_SINK}-recent${NUM_RECENT}/ \
-    --method sparq --write_in_time --mp_num 8 --pp_num 1 --e --min_seq_len 4096
-python eval_longbench_infinitebench.py --model preds/sparq/longbenche_gt4K_full-glm-4-9b-chat-channel${RCHANNEL}-top${LONGBENCH_BUDGET}-sink${NUM_SINK}-recent${NUM_RECENT}
+    --output_dir ./preds/loki/longbenche_gt4K_full-glm-4-9b-chat-channel${RCHANNEL}-top${LONGBENCH_BUDGET}-sink${NUM_SINK}-recent${NUM_RECENT}/ \
+    --method loki --write_in_time --mp_num 8 --pp_num 1 --e --min_seq_len 4096
+python eval_longbench_infinitebench.py --model preds/loki/longbenche_gt4K_full-glm-4-9b-chat-channel${RCHANNEL}-top${LONGBENCH_BUDGET}-sink${NUM_SINK}-recent${NUM_RECENT}
 
 # longbenche-32K-llama2
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 RCHANNEL=${RCHANNEL} TOPK_RATIO=${LONGBENCH_BUDGET} PCA_PATH=${LLAMA2_PCA_PATH} CUDA_MEM=17.0 NUM_RECENT=${NUM_RECENT} NUM_SINK=${NUM_SINK} python3 run_pred.py \
@@ -48,9 +48,9 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 RCHANNEL=${RCHANNEL} TOPK_RATIO=${LONGBENCH
     --model_maxlen 32128 \
     --dataset_path ${LONGBENCH_PATH} \
     --dataset_name longbench \
-    --output_dir ./preds/sparq/longbenche_gt4K_32K-Llama-2-7B-32K-Instruct-channel${RCHANNEL}-top${LONGBENCH_BUDGET}-sink${NUM_SINK}-recent${NUM_RECENT}/ \
-    --method sparq --write_in_time --mp_num 8 --pp_num 1 --e --min_seq_len 4096
-python eval_longbench_infinitebench.py --model preds/sparq/longbenche_gt4K_32K-Llama-2-7B-32K-Instruct-channel${RCHANNEL}-top${LONGBENCH_BUDGET}-sink${NUM_SINK}-recent${NUM_RECENT}
+    --output_dir ./preds/loki/longbenche_gt4K_32K-Llama-2-7B-32K-Instruct-channel${RCHANNEL}-top${LONGBENCH_BUDGET}-sink${NUM_SINK}-recent${NUM_RECENT}/ \
+    --method loki --write_in_time --mp_num 8 --pp_num 1 --e --min_seq_len 4096
+python eval_longbench_infinitebench.py --model preds/loki/longbenche_gt4K_32K-Llama-2-7B-32K-Instruct-channel${RCHANNEL}-top${LONGBENCH_BUDGET}-sink${NUM_SINK}-recent${NUM_RECENT}
 
 # RULER-128K-llama3.1
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 RCHANNEL=${RCHANNEL} TOPK_RATIO=${RULER_BUDGET} PCA_PATH=${LLAMA31_PCA_PATH} CUDA_MEM=17.0 NUM_RECENT=${NUM_RECENT} NUM_SINK=${NUM_SINK} python3 run_pred.py \
@@ -59,9 +59,9 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 RCHANNEL=${RCHANNEL} TOPK_RATIO=${RULER_BUD
     --model_maxlen 131072 \
     --dataset_path ${RULER_LLAMA31_PATH} \
     --dataset_name ruler \
-    --output_dir ./preds/sparq/ruler_128K-Meta-Llama-3.1-8B-Instruct-channel${RCHANNEL}-top${TOPK_RATIO}-sink${NUM_SINK}-recent${NUM_RECENT}/ \
-    --method sparq --write_in_time --mp_num 4 --pp_num 2 --min_seq_len 0
-python eval_ruler.py --model preds/sparq/ruler_128K-Meta-Llama-3.1-8B-Instruct-channel${RCHANNEL}-top${TOPK_RATIO}-sink${NUM_SINK}-recent${NUM_RECENT}
+    --output_dir ./preds/loki/ruler_128K-Meta-Llama-3.1-8B-Instruct-channel${RCHANNEL}-top${TOPK_RATIO}-sink${NUM_SINK}-recent${NUM_RECENT}/ \
+    --method loki --write_in_time --mp_num 4 --pp_num 2 --min_seq_len 0
+python eval_ruler.py --model preds/loki/ruler_128K-Meta-Llama-3.1-8B-Instruct-channel${RCHANNEL}-top${TOPK_RATIO}-sink${NUM_SINK}-recent${NUM_RECENT}
 
 # RULER-128K-glm4
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 RCHANNEL=${RCHANNEL} TOPK_RATIO=${RULER_BUDGET} PCA_PATH=${GLM4_PCA_PATH} CUDA_MEM=6.0 NUM_RECENT=${NUM_RECENT} NUM_SINK=${NUM_SINK} python3 run_pred.py \
@@ -70,6 +70,6 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 RCHANNEL=${RCHANNEL} TOPK_RATIO=${RULER_BUD
     --model_maxlen 131072 \
     --dataset_path ${RULER_GLM4_PATH} \
     --dataset_name ruler \
-    --output_dir ./preds/sparq/ruler_128K-glm-4-9b-chat-channel${RCHANNEL}-top${TOPK_RATIO}-sink${NUM_SINK}-recent${NUM_RECENT}/ \
-    --method sparq --write_in_time --mp_num 8 --pp_num 1 --min_seq_len 0
-python eval_ruler.py --model preds/sparq/ruler_128K-glm-4-9b-chat-channel${RCHANNEL}-top${TOPK_RATIO}-sink${NUM_SINK}-recent${NUM_RECENT}
+    --output_dir ./preds/loki/ruler_128K-glm-4-9b-chat-channel${RCHANNEL}-top${TOPK_RATIO}-sink${NUM_SINK}-recent${NUM_RECENT}/ \
+    --method loki --write_in_time --mp_num 8 --pp_num 1 --min_seq_len 0
+python eval_ruler.py --model preds/loki/ruler_128K-glm-4-9b-chat-channel${RCHANNEL}-top${TOPK_RATIO}-sink${NUM_SINK}-recent${NUM_RECENT}

@@ -21,7 +21,7 @@ LLAMA2_HASH_WEIGHTS_PATH=/root/workspace/myoffloading/model_weights_v4/Llama-2-7
 GLM4_HASH_WEIGHTS_PATH=/root/workspace/myoffloading/model_weights_v4/glm-4-9b-chat-${RBIT}
 
 # longbenche-Full-llama3.1
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 RBIT=${RBIT} TOPK_RATIO=${LONGBENCH_BUDGET} HASH_WEIGHTS_PATH=${LLAMA31_HASH_WEIGHTS_PATH} CUDA_MEM=17.0 NUM_RECENT=${NUM_RECENT} NUM_SINK=${NUM_SINK} USE_NORM=${USE_NORM} python3 run_pred.py \
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 RBIT=${RBIT} TOPK_RATIO=${LONGBENCH_BUDGET} HASH_WEIGHTS_PATH=${LLAMA31_HASH_WEIGHTS_PATH} CUDA_MEM=18.0 NUM_RECENT=${NUM_RECENT} NUM_SINK=${NUM_SINK} USE_NORM=${USE_NORM} python3 run_pred.py \
     --model_name Meta-Llama-3.1-8B-Instruct \
     --model_name_or_path ${LLAMA31_PATH} \
     --model_maxlen 60000 \
@@ -43,7 +43,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 RBIT=${RBIT} TOPK_RATIO=${LONGBENCH_BUDGET}
 python eval_longbench_infinitebench.py --model preds/hash/longbenche_gt4K_full-glm-4-9b-chat-rbit${RBIT}-top${LONGBENCH_BUDGET}-sink${NUM_SINK}-recent${NUM_RECENT}-use_knorm${USE_NORM}
 
 # longbenche-32K-llama2
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 RBIT=${RBIT} TOPK_RATIO=${LONGBENCH_BUDGET} HASH_WEIGHTS_PATH=${LLAMA2_HASH_WEIGHTS_PATH} CUDA_MEM=17.0 NUM_RECENT=${NUM_RECENT} NUM_SINK=${NUM_SINK} USE_NORM=${USE_NORM} python3 run_pred.py \
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 RBIT=${RBIT} TOPK_RATIO=${LONGBENCH_BUDGET} HASH_WEIGHTS_PATH=${LLAMA2_HASH_WEIGHTS_PATH} CUDA_MEM=18.0 NUM_RECENT=${NUM_RECENT} NUM_SINK=${NUM_SINK} USE_NORM=${USE_NORM} python3 run_pred.py \
     --model_name Llama-2-7B-32K-Instruct \
     --model_name_or_path ${LLAMA2_PATH} \
     --model_maxlen 32128 \
@@ -54,7 +54,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 RBIT=${RBIT} TOPK_RATIO=${LONGBENCH_BUDGET}
 python eval_longbench_infinitebench.py --model preds/hash/longbenche_gt4K_32K-Llama-2-7B-32K-Instruct-rbit${RBIT}-top${LONGBENCH_BUDGET}-sink${NUM_SINK}-recent${NUM_RECENT}-use_knorm${USE_NORM}
 
 # RULER-128K-llama3.1
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 RBIT=${RBIT} TOPK_RATIO=${RULER_BUDGET} HASH_WEIGHTS_PATH=${LLAMA31_HASH_WEIGHTS_PATH} CUDA_MEM=17.0 NUM_RECENT=${NUM_RECENT} NUM_SINK=${NUM_SINK} USE_NORM=${USE_NORM} python3 run_pred.py \
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 RBIT=${RBIT} TOPK_RATIO=${RULER_BUDGET} HASH_WEIGHTS_PATH=${LLAMA31_HASH_WEIGHTS_PATH} CUDA_MEM=18.0 NUM_RECENT=${NUM_RECENT} NUM_SINK=${NUM_SINK} USE_NORM=${USE_NORM} python3 run_pred.py \
     --model_name Meta-Llama-3.1-8B-Instruct \
     --model_name_or_path ${LLAMA31_PATH} \
     --model_maxlen 131072 \
