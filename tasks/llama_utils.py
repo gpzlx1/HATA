@@ -178,7 +178,7 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
             "use_norm": int(os.environ["USE_NORM"]) > 0,
             "with_bias": False,
             "num_sink": int(os.environ["NUM_SINK"]),
-            "num_recent": int(os.environ["NUM_RECENT"])
+            "num_recent": int(os.environ["NUM_RECENT"]),
         }
         model_config._attn_implementation = "flash_attention_2"
         if model_arch == "llama":
@@ -205,7 +205,9 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
             float(os.environ["CUDA_MEM"]) * 1024 * 1024 * 1024,
             "num_channels": int(os.environ["RCHANNEL"]),
             "sparse_ratio": float(os.environ["TOPK_RATIO"]),
-            "aux_data_path": os.environ["PCA_PATH"]
+            "aux_data_path": os.environ["PCA_PATH"],
+            "num_sink": int(os.environ["NUM_SINK"]),
+            "num_recent": int(os.environ["NUM_RECENT"]),
         }
         model_config._attn_implementation = "flash_attention_2"
         if model_arch == "llama":
@@ -228,6 +230,8 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
             float(os.environ["CUDA_MEM"]) * 1024 * 1024 * 1024,
             "r_channel": int(os.environ["RCHANNEL"]),
             "sparse_ratio": float(os.environ["TOPK_RATIO"]),
+            "num_sink": int(os.environ["NUM_SINK"]),
+            "num_recent": int(os.environ["NUM_RECENT"]),
         }
         model_config._attn_implementation = "flash_attention_2"
         if model_arch == "llama":
@@ -249,6 +253,8 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
             "max_gpu_cache_memory":
             float(os.environ["CUDA_MEM"]) * 1024 * 1024 * 1024,
             "sparse_ratio": float(os.environ["TOPK_RATIO"]),
+            "num_sink": int(os.environ["NUM_SINK"]),
+            "num_recent": int(os.environ["NUM_RECENT"]),
         }
         model_config._attn_implementation = "flash_attention_2"
         if model_arch == "llama":

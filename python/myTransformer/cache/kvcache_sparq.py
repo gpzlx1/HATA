@@ -21,6 +21,8 @@ class SparQStaticCache(CustomStaticCache):
         sparse_ratio: float = 0.1,
         r_channel: int = 32,
         num_skip_layers: int = 2,
+        num_sink: int = 0,
+        num_recent: int = 0,
     ) -> None:
         super().__init__(config, device, dtype, max_gpu_cache_memory_size,
                          layer_device_map)
@@ -28,6 +30,8 @@ class SparQStaticCache(CustomStaticCache):
         self.r_channel = r_channel
         self.num_skip_layers = num_skip_layers
         self.gqa_size = self.num_heads // self.num_key_value_heads
+        self.num_sink = num_sink
+        self.num_recent = num_recent
 
     def compute_topk(self, query: torch.Tensor, layer_idx: int):
         assert layer_idx >= self.num_skip_layers, f"partial topk is not enabled in layer{layer_idx}!"
@@ -40,6 +44,10 @@ class SparQStaticCache(CustomStaticCache):
         channel_index = torch.topk(query_, self.r_channel, dim=-1).indices
         score = sparq_qk_score(query, self.layer_caches[layer_idx][0],
                                self.seq_len, channel_index)
+        if self.num_sink > 0:
+            score[:, :, :self.num_sink] = torch.finfo(score.dtype).max
+        if self.num_recent > 0:
+            score[:, :, -self.num_recent:] = torch.finfo(score.dtype).max
         torch.cuda.nvtx.range_pop()
 
         torch.cuda.nvtx.range_push("compute topk")
@@ -111,6 +119,8 @@ def prepare_cache_for_generation(
             layer_device_map=layer_device_map,
             sparse_ratio=generation_config.sparse_ratio,
             r_channel=generation_config.r_channel,
+            num_sink=generation_config.num_sink,
+            num_recent=generation_config.num_recent,
         )
         self._cache.build_cache()
 

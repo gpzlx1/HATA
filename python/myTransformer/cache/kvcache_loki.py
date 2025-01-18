@@ -36,6 +36,8 @@ class LokiStaticCache(CustomStaticCache):
         sparse_ratio: float = 0.1,
         num_skip_layers: int = 2,
         aux_data_path: str = None,
+        num_sink: int = 0,
+        num_recent: int = 0,
     ) -> None:
         super().__init__(config, device, dtype, max_gpu_cache_memory_size,
                          layer_device_map)
@@ -44,6 +46,8 @@ class LokiStaticCache(CustomStaticCache):
         self.aux_data_path = aux_data_path
         self.num_skip_layers = num_skip_layers
         self.gqa_size = self.num_heads // self.num_key_value_heads
+        self.num_sink = num_sink
+        self.num_recent = num_recent
 
     def load_aux_data(self):
         self.pca_matrix = []
@@ -132,6 +136,10 @@ class LokiStaticCache(CustomStaticCache):
         torch.cuda.nvtx.range_push("partial score")
         score = loki_qk_score(query, self.layer_caches[layer_idx][0],
                               self.seq_len, self.partial_dim)
+        if self.num_sink > 0:
+            score[:, :, :self.num_sink] = torch.finfo(score.dtype).max
+        if self.num_recent > 0:
+            score[:, :, -self.num_recent:] = torch.finfo(score.dtype).max
         torch.cuda.nvtx.range_pop()
 
         torch.cuda.nvtx.range_push("compute topk")
@@ -204,6 +212,8 @@ def prepare_cache_for_generation(
             layer_device_map=layer_device_map,
             sparse_ratio=generation_config.sparse_ratio,
             aux_data_path=generation_config.aux_data_path,
+            num_sink=generation_config.num_sink,
+            num_recent=generation_config.num_recent,
         )
         self._cache.build_cache()
 

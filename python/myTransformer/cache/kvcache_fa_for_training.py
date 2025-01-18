@@ -244,6 +244,7 @@ def prepare_cache_for_generation(
     if self._cache.build_dataset:
         self._cache.query_idx = generation_config.query_idx
         self._cache.stop_mask = generation_config.stop_mask
+        self._cache.pos_sample_ratio = generation_config.pos_sample_ratio
 
     cache_name = "past_key_values"
     model_kwargs[cache_name] = self._cache

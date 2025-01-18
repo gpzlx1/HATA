@@ -242,7 +242,8 @@ class CustomSelfAttention(SelfAttention):
 
             topk_indices = torch.topk(select_qk_score,
                                       dim=-1,
-                                      k=int(select_qk_score.shape[-1] * 0.1),
+                                      k=int(select_qk_score.shape[-1] *
+                                            past_key_value.pos_sample_ratio),
                                       largest=True).indices
             select_qk_score[:, :] = -1.0
             topk_scores = torch.linspace(

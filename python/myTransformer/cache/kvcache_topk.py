@@ -33,17 +33,25 @@ class TopkStaticCache(CustomStaticCache):
                                                    int]]] = None,
         sparse_ratio: float = 0.1,
         num_skip_layers: int = 2,
+        num_sink: int = 0,
+        num_recent: int = 0,
     ) -> None:
         super().__init__(config, device, dtype, max_gpu_cache_memory_size,
                          layer_device_map)
         self.sparse_ratio = sparse_ratio
         self.num_skip_layers = num_skip_layers
+        self.num_sink = num_sink
+        self.num_recent = num_recent
 
     def compute_topk(self, query: torch.Tensor, layer_idx: int):
         assert layer_idx >= self.num_skip_layers, f"topk is not enabled in layer{layer_idx}!"
         torch.cuda.nvtx.range_push("topk score")
         score = topk_qk_score(query, self.layer_caches[layer_idx][0],
                               self.seq_len)
+        if self.num_sink > 0:
+            score[:, :, :self.num_sink] = torch.finfo(score.dtype).max
+        if self.num_recent > 0:
+            score[:, :, -self.num_recent:] = torch.finfo(score.dtype).max
         torch.cuda.nvtx.range_pop()
 
         torch.cuda.nvtx.range_push("compute topk")
@@ -114,6 +122,8 @@ def prepare_cache_for_generation(
             dtype=self.dtype,
             layer_device_map=layer_device_map,
             sparse_ratio=generation_config.sparse_ratio,
+            num_sink=generation_config.num_sink,
+            num_recent=generation_config.num_recent,
         )
         self._cache.build_cache()
 
