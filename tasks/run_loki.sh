@@ -16,8 +16,8 @@ NUM_SINK=64
 NUM_RECENT=96
 
 GLM4_PCA_PATH=/root/workspace/myoffloading/loki_pca/glm-4-9b-chat
-LLAMA31_PCA_PATH=/root/workspace/myoffloading/loki_pca/glm-4-9b-chat
-LLAMA2_PCA_PATH=/root/workspace/myoffloading/loki_pca/glm-4-9b-chat
+LLAMA31_PCA_PATH=/root/workspace/myoffloading/loki_pca/Meta-Llama-3.1-8B-Instruct
+LLAMA2_PCA_PATH=/root/workspace/myoffloading/loki_pca/Llama-2-7B-32K-Instruct
 
 # longbenche-Full-llama3.1
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 RCHANNEL=${RCHANNEL} TOPK_RATIO=${LONGBENCH_BUDGET} PCA_PATH=${LLAMA31_PCA_PATH} CUDA_MEM=17.0 NUM_RECENT=${NUM_RECENT} NUM_SINK=${NUM_SINK} python3 run_pred.py \
