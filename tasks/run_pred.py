@@ -65,6 +65,7 @@ def pred_loop_func(args, rank, task_queue, dataset_manager):
                                            no_split_module_classes=[
                                                "CustomLlamaDecoderLayer",
                                                "CustomGlmDecoderLayer",
+                                               "CustomGLMBlock",
                                                "CustomQwen2DecoderLayer"
                                            ],
                                            **map_kwargs)

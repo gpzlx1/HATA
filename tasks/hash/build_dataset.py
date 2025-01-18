@@ -38,6 +38,7 @@ def set_args(parser: argparse.ArgumentParser):
                         default="/nfs/shared_LLM_dataset/LongBench-v2")
     parser.add_argument("--pp_num", type=int, default=1)
     parser.add_argument("--apply_template", default=False, action="store_true")
+    parser.add_argument("--pos_sample_ratio", type=float, default=0.1)
 
 
 def seed_everything(seed):
@@ -57,6 +58,9 @@ def apply_template(prompt, model_name, tokenizer):
         prompt = tokenizer.apply_chat_template(messages,
                                                add_generation_prompt=True,
                                                tokenize=False)
+    # llama2-instruct
+    elif model_name == "llama2":
+        prompt = f"[INST] {prompt} [/INST]"
     # longchat
     elif model_name == "longchat":
         conv = get_conversation_template("vicuna")
@@ -218,6 +222,7 @@ if __name__ == "__main__":
         "save_path": args.save_path,
         "buffer_size": 32768,
         "num_skip_layers": 2,
+        "pos_sample_ratio": args.pos_sample_ratio,
     }
     generation_config = GenerationConfig(**generation_kwargs)
 

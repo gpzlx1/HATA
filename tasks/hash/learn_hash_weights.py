@@ -208,6 +208,8 @@ def train_func(args, rank):
 
     os.makedirs(args.save_path, exist_ok=True)
 
+    print(layer_list)
+
     for layer in layer_list:
         trainer = HashTrainer(args.num_heads,
                               args.num_kv_heads,
