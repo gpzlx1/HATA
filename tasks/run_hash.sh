@@ -12,13 +12,13 @@ LONGBENCH_BUDGET=512
 RULER_BUDGET=2048
 
 RBIT=128
-NUM_SINK=64
-NUM_RECENT=96
+NUM_SINK=0
+NUM_RECENT=0
 USE_NORM=1
 
-LLAMA31_HASH_WEIGHTS_PATH=/root/workspace/myoffloading/model_weights_v4/Meta-Llama-3.1-8B-Instruct-${RBIT}
-LLAMA2_HASH_WEIGHTS_PATH=/root/workspace/myoffloading/model_weights_v4/Llama-2-7B-32K-Instruct-${RBIT}
-GLM4_HASH_WEIGHTS_PATH=/root/workspace/myoffloading/model_weights_v4/glm-4-9b-chat-${RBIT}
+LLAMA31_HASH_WEIGHTS_PATH=/root/workspace/myoffloading/model_weights_v5/Meta-Llama-3.1-8B-Instruct-${RBIT}
+LLAMA2_HASH_WEIGHTS_PATH=/root/workspace/myoffloading/model_weights_v5/Llama-2-7B-32K-Instruct-${RBIT}
+GLM4_HASH_WEIGHTS_PATH=/root/workspace/myoffloading/model_weights_v5/glm-4-9b-chat-${RBIT}
 
 # longbenche-Full-llama3.1
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 RBIT=${RBIT} TOPK_RATIO=${LONGBENCH_BUDGET} HASH_WEIGHTS_PATH=${LLAMA31_HASH_WEIGHTS_PATH} CUDA_MEM=18.0 NUM_RECENT=${NUM_RECENT} NUM_SINK=${NUM_SINK} USE_NORM=${USE_NORM} python3 run_pred.py \

@@ -196,6 +196,9 @@ if __name__ == "__main__":
             tokenizer.pad_token = tokenizer.eos_token
             tokenizer.pad_token_id = tokenizer.eos_token_id
             tokenizer.padding_side = "left"
+        elif model_name == "llama2":
+            tokenizer.pad_token = "[PAD]"
+            tokenizer.padding_side = "left"
 
     device_ids = [i for i in range(args.pp_num)]
     if len(device_ids) > 1:
@@ -238,7 +241,7 @@ if __name__ == "__main__":
         it += 1
 
         if args.apply_template:
-            apply_template(prompt, model_name, tokenizer)
+            prompt = apply_template(prompt, model_name, tokenizer)
         encoded = tokenizer(prompt, return_tensors="pt")
 
         seq_len = encoded.input_ids.shape[1]
