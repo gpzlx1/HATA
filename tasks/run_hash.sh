@@ -3,6 +3,8 @@
 LONGBENCH_PATH=/nfs/shared_LLM_dataset/LongBench
 RULER_LLAMA31_PATH=/nfs/shared_LLM_dataset/RULER/Meta-Llama-3.1-8B-Instruct/128K
 RULER_GLM4_PATH=/nfs/shared_LLM_dataset/RULER/glm-4-9b-chat/128K
+NIAH_LLAMA31_PATH=/root/workspace/myoffloading/myTransformer/tasks/niah/llama31_32k_128k
+NIAH_GLM4_PATH=/root/workspace/myoffloading/myTransformer/tasks/niah/glm4_32k_128k
 
 LLAMA31_PATH=/nfs/shared_LLM_model/meta-llama/Meta-Llama-3.1-8B-Instruct
 LLAMA2_PATH=/nfs/shared_LLM_model/togethercomputer/Llama-2-7B-32K-Instruct
@@ -10,6 +12,7 @@ GLM4_PATH=/nfs/shared_LLM_model/THUDM/glm-4-9b-chat
 
 LONGBENCH_BUDGET=512
 RULER_BUDGET=2048
+NIAH_BUDGET=2048
 
 RBIT=128
 NUM_SINK=0
@@ -60,9 +63,9 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 RBIT=${RBIT} TOPK_RATIO=${RULER_BUDGET} HAS
     --model_maxlen 131072 \
     --dataset_path ${RULER_LLAMA31_PATH} \
     --dataset_name ruler \
-    --output_dir ./preds/hash/ruler_128K-Meta-Llama-3.1-8B-Instruct-rbit${RBIT}-top${TOPK_RATIO}-sink${NUM_SINK}-recent${NUM_RECENT}-use_knorm${USE_NORM}/ \
+    --output_dir ./preds/hash/ruler_128K-Meta-Llama-3.1-8B-Instruct-rbit${RBIT}-top${RULER_BUDGET}-sink${NUM_SINK}-recent${NUM_RECENT}-use_knorm${USE_NORM}/ \
     --method hash --write_in_time --mp_num 4 --pp_num 2 --min_seq_len 0
-python eval_ruler.py --model preds/hash/ruler_128K-Meta-Llama-3.1-8B-Instruct-rbit${RBIT}-top${TOPK_RATIO}-sink${NUM_SINK}-recent${NUM_RECENT}-use_knorm${USE_NORM}
+python eval_ruler.py --model preds/hash/ruler_128K-Meta-Llama-3.1-8B-Instruct-rbit${RBIT}-top${RULER_BUDGET}-sink${NUM_SINK}-recent${NUM_RECENT}-use_knorm${USE_NORM}
 
 # RULER-128K-glm4
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 RBIT=${RBIT} TOPK_RATIO=${RULER_BUDGET} HASH_WEIGHTS_PATH=${GLM4_HASH_WEIGHTS_PATH} CUDA_MEM=6.0 NUM_RECENT=${NUM_RECENT} NUM_SINK=${NUM_SINK} USE_NORM=${USE_NORM} python3 run_pred.py \
@@ -71,6 +74,28 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 RBIT=${RBIT} TOPK_RATIO=${RULER_BUDGET} HAS
     --model_maxlen 131072 \
     --dataset_path ${RULER_GLM4_PATH} \
     --dataset_name ruler \
-    --output_dir ./preds/hash/ruler_128K-glm-4-9b-chat-rbit${RBIT}-top${TOPK_RATIO}-sink${NUM_SINK}-recent${NUM_RECENT}-use_knorm${USE_NORM}/ \
+    --output_dir ./preds/hash/ruler_128K-glm-4-9b-chat-rbit${RBIT}-top${RULER_BUDGET}-sink${NUM_SINK}-recent${NUM_RECENT}-use_knorm${USE_NORM}/ \
     --method hash --write_in_time --mp_num 8 --pp_num 1 --min_seq_len 0
-python eval_ruler.py --model preds/hash/ruler_128K-glm-4-9b-chat-rbit${RBIT}-top${TOPK_RATIO}-sink${NUM_SINK}-recent${NUM_RECENT}-use_knorm${USE_NORM}
+python eval_ruler.py --model preds/hash/ruler_128K-glm-4-9b-chat-rbit${RBIT}-top${RULER_BUDGET}-sink${NUM_SINK}-recent${NUM_RECENT}-use_knorm${USE_NORM}
+
+# NiaH-128K-llama3.1
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 RBIT=${RBIT} TOPK_RATIO=${NIAH_BUDGET} HASH_WEIGHTS_PATH=${LLAMA31_HASH_WEIGHTS_PATH} CUDA_MEM=18.0 NUM_RECENT=${NUM_RECENT} NUM_SINK=${NUM_SINK} USE_NORM=${USE_NORM} python3 run_pred.py \
+    --model_name Meta-Llama-3.1-8B-Instruct \
+    --model_name_or_path ${LLAMA31_PATH} \
+    --model_maxlen 131072 \
+    --dataset_path ${NIAH_LLAMA31_PATH} \
+    --dataset_name niah \
+    --output_dir ./preds/hash/niah_32K_128K-Meta-Llama-3.1-8B-Instruct-rbit${RBIT}-top${NIAH_BUDGET}-sink${NUM_SINK}-recent${NUM_RECENT}-use_knorm${USE_NORM}/ \
+    --method hash --write_in_time --mp_num 4 --pp_num 2 --min_seq_len 0
+python eval_niah.py --input preds/hash/niah_32K_128K-Meta-Llama-3.1-8B-Instruct-rbit${RBIT}-top${NIAH_BUDGET}-sink${NUM_SINK}-recent${NUM_RECENT}-use_knorm${USE_NORM} --model Llama-3.1-8B-Instruct --method HATA
+
+# NiaH-128K-glm4
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 RBIT=${RBIT} TOPK_RATIO=${NIAH_BUDGET} HASH_WEIGHTS_PATH=${GLM4_HASH_WEIGHTS_PATH} CUDA_MEM=6.0 NUM_RECENT=${NUM_RECENT} NUM_SINK=${NUM_SINK} USE_NORM=${USE_NORM} python3 run_pred.py \
+    --model_name glm-4-9b-chat \
+    --model_name_or_path ${GLM4_PATH} \
+    --model_maxlen 131072 \
+    --dataset_path ${NIAH_GLM4_PATH} \
+    --dataset_name niah \
+    --output_dir ./preds/hash/niah_32K_128K-glm-4-9b-chat-rbit${RBIT}-top${NIAH_BUDGET}-sink${NUM_SINK}-recent${NUM_RECENT}-use_knorm${USE_NORM}/ \
+    --method hash --write_in_time --mp_num 8 --pp_num 1 --min_seq_len 0
+python eval_niah.py --input preds/hash/niah_32K_128K-glm-4-9b-chat-rbit${RBIT}-top${NIAH_BUDGET}-sink${NUM_SINK}-recent${NUM_RECENT}-use_knorm${USE_NORM} --model GLM-4-9b-Chat --method HATA

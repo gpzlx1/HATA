@@ -57,7 +57,7 @@ def summary(args):
             max_context = max(max_context,
                               length) if max_context is not None else length
 
-            pred = data["pred"]
+            pred = data["pred"].strip()
             pred = re.split("[^0-9]", pred)[0]
             answer = data["answers"][0]
             processed_data["correct"] = pred == answer
@@ -165,7 +165,7 @@ def plot_needle_viz(
     # Save and Show the plot
     save_path = os.path.join(
         args.output,
-        f"needle_viz_{args.model}_{args.method}_{min_context_str}_{max_context_str}.pdf",
+        f"NiaH_{args.model}_{args.method}_{min_context_str}_{max_context_str}.pdf",
     )
     plt.savefig(save_path, dpi=1000)
     print(f"Needle plot saved to {save_path}.")
