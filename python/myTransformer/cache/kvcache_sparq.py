@@ -38,6 +38,10 @@ class SparQStaticCache(CustomStaticCache):
         torch.cuda.nvtx.range_push("partial score")
         abs_query = query.abs()
 
+        kvcache_len = self.seq_len + 1 if layer_idx != self.num_layers - 1 else self.seq_len
+
+        # print(layer_idx, kvcache_len)
+
         # compute channel index
         if self.gqa_size > 1:
             reduce_abs_query = abs_query.view(self.curr_batch_size,
@@ -68,12 +72,12 @@ class SparQStaticCache(CustomStaticCache):
         ## shape for score: [bsz, num_head, seq_len]
         score = sparq_qk_score_v2(partial_query,
                                   self.layer_caches[layer_idx][0], scale,
-                                  self.seq_len, channel_index)
+                                  kvcache_len, channel_index)
         score = torch.softmax(score.to(torch.float32),
                               dim=-1).to(torch.float16)
         if self.gqa_size > 1:
             score = score.view(self.curr_batch_size, self.num_key_value_heads,
-                               self.gqa_size, self.seq_len)
+                               self.gqa_size, kvcache_len)
             score = torch.sum(score, dim=2)
 
         if self.num_sink > 0:
@@ -84,9 +88,9 @@ class SparQStaticCache(CustomStaticCache):
 
         torch.cuda.nvtx.range_push("compute topk")
         if self.sparse_ratio < 1:
-            fetch_num = int(self.seq_len * self.sparse_ratio)
+            fetch_num = int(kvcache_len * self.sparse_ratio)
         else:
-            fetch_num = min(int(self.sparse_ratio), self.seq_len)
+            fetch_num = min(int(self.sparse_ratio), kvcache_len)
         # topk_indices = KVLib.batch_topk(score, fetch_num, True)
         topk_indices = torch.topk(score, fetch_num, dim=-1,
                                   largest=True).indices.int()

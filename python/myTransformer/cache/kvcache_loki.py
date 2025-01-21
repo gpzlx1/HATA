@@ -133,14 +133,17 @@ class LokiStaticCache(CustomStaticCache):
 
     def compute_topk(self, query: torch.Tensor, layer_idx: int):
         assert layer_idx >= self.num_skip_layers, f"partial topk is not enabled in layer{layer_idx}!"
+
+        kvcache_len = self.seq_len + 1 if layer_idx != self.num_layers - 1 else self.seq_len
+
         torch.cuda.nvtx.range_push("partial score")
         score = loki_qk_score(query, self.layer_caches[layer_idx][0],
-                              self.seq_len, self.partial_dim)
+                              kvcache_len, self.partial_dim)
         # score shape = [batch_size, head_num, seq_len]
         score = torch.softmax(score.to(torch.float32),
                               dim=-1).to(torch.float16)
         score = score.view(self.curr_batch_size, self.num_key_value_heads,
-                           self.gqa_size, self.seq_len)
+                           self.gqa_size, kvcache_len)
         score = torch.sum(score, dim=2)
 
         if self.num_sink > 0:
@@ -151,9 +154,9 @@ class LokiStaticCache(CustomStaticCache):
 
         torch.cuda.nvtx.range_push("compute topk")
         if self.sparse_ratio < 1:
-            fetch_num = int(self.seq_len * self.sparse_ratio)
+            fetch_num = int(kvcache_len * self.sparse_ratio)
         else:
-            fetch_num = min(int(self.sparse_ratio), self.seq_len)
+            fetch_num = min(int(self.sparse_ratio), kvcache_len)
         # topk_indices = KVLib.batch_topk(score, fetch_num, True)
         topk_indices = torch.topk(score, fetch_num, dim=-1,
                                   largest=True).indices.int()
