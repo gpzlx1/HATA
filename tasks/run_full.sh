@@ -3,6 +3,8 @@
 LONGBENCH_PATH=/nfs/shared_LLM_dataset/LongBench
 RULER_LLAMA31_PATH=/nfs/shared_LLM_dataset/RULER/Meta-Llama-3.1-8B-Instruct/128K
 RULER_GLM4_PATH=/nfs/shared_LLM_dataset/RULER/glm-4-9b-chat/128K
+INFINITEBENCH_PATH=/nfs/shared_LLM_dataset/xinrongzhang2022/InfiniteBench/processed
+LONGBENCHV2_PATH=/nfs/shared_LLM_dataset/LongBench-v2
 
 LLAMA31_PATH=/nfs/shared_LLM_model/meta-llama/Meta-Llama-3.1-8B-Instruct
 LLAMA2_PATH=/nfs/shared_LLM_model/togethercomputer/Llama-2-7B-32K-Instruct
@@ -62,3 +64,70 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 CUDA_MEM=6.0 python3 run_pred.py \
     --output_dir ./preds/flashattn/ruler_128K-glm-4-9b-chat/ \
     --method flashattn --write_in_time --mp_num 8 --pp_num 1 --min_seq_len 0
 python eval_ruler.py --model preds/flashattn/ruler_128K-glm-4-9b-chat
+
+# RULER-128K-llama3.1
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 CUDA_MEM=17.0 python3 run_pred.py \
+    --model_name Meta-Llama-3.1-8B-Instruct \
+    --model_name_or_path ${LLAMA31_PATH} \
+    --model_maxlen 131072 \
+    --dataset_path ${RULER_LLAMA31_PATH} \
+    --dataset_name ruler \
+    --output_dir ./preds/flashattn/ruler_128K-Meta-Llama-3.1-8B-Instruct/ \
+    --method flashattn --write_in_time --mp_num 4 --pp_num 2 --min_seq_len 0
+python eval_ruler.py --model preds/flashattn/ruler_128K-Meta-Llama-3.1-8B-Instruct
+
+# RULER-128K-glm4
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 CUDA_MEM=6.0 python3 run_pred.py \
+    --model_name glm-4-9b-chat \
+    --model_name_or_path ${GLM4_PATH} \
+    --model_maxlen 131072 \
+    --dataset_path ${RULER_GLM4_PATH} \
+    --dataset_name ruler \
+    --output_dir ./preds/flashattn/ruler_128K-glm-4-9b-chat/ \
+    --method flashattn --write_in_time --mp_num 8 --pp_num 1 --min_seq_len 0
+python eval_ruler.py --model preds/flashattn/ruler_128K-glm-4-9b-chat
+
+# InfiniteBench-128K-glm4
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 CUDA_MEM=6.0 python3 run_pred.py \
+    --model_name glm-4-9b-chat \
+    --model_name_or_path ${GLM4_PATH} \
+    --model_maxlen 130816 \
+    --dataset_path ${INFINITEBENCH_PATH} \
+    --dataset_name infinitebench \
+    --output_dir ./preds/flashattn/infinitebench_128K-glm-4-9b-chat/ \
+    --method flashattn --write_in_time --mp_num 8 --pp_num 1 --min_seq_len 0
+python eval_longbench_infinitebench.py --model preds/flashattn/infinitebench_128K-glm-4-9b-chat
+
+# InfiniteBench-128K-llama3.1
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 CUDA_MEM=17.0 python3 run_pred.py \
+    --model_name Meta-Llama-3.1-8B-Instruct \
+    --model_name_or_path ${LLAMA31_PATH} \
+    --model_maxlen 130816 \
+    --dataset_path ${INFINITEBENCH_PATH} \
+    --dataset_name infinitebench \
+    --output_dir ./preds/flashattn/infinitebench_128K-Meta-Llama-3.1-8B-Instruct/ \
+    --method flashattn --write_in_time --mp_num 4 --pp_num 2 --min_seq_len 0
+python eval_longbench_infinitebench.py --model preds/flashattn/infinitebench_128K-Meta-Llama-3.1-8B-Instruct
+
+# LongBench_v2-128K-glm4
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 CUDA_MEM=6.0 python3 run_pred.py \
+    --model_name glm-4-9b-chat \
+    --model_name_or_path ${GLM4_PATH} \
+    --model_maxlen 130816 \
+    --dataset_path ${LONGBENCHV2_PATH} \
+    --dataset_name longbench-v2 \
+    --output_dir ./preds/flashattn/longbenchv2_128K-glm-4-9b-chat/ \
+    --method flashattn --write_in_time --mp_num 8 --pp_num 1 --min_seq_len 0
+python eval_longbench_v2.py --model preds/flashattn/longbenchv2_128K-glm-4-9b-chat
+
+# LongBench_v2-128K-llama3.1
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 CUDA_MEM=17.0 python3 run_pred.py \
+    --model_name Meta-Llama-3.1-8B-Instruct \
+    --model_name_or_path ${LLAMA31_PATH} \
+    --model_maxlen 130816 \
+    --dataset_path ${LONGBENCHV2_PATH} \
+    --dataset_name longbench-v2 \
+    --output_dir ./preds/flashattn/longbenchv2_128K-Meta-Llama-3.1-8B-Instruct/ \
+    --method flashattn --write_in_time --mp_num 4 --pp_num 2 --min_seq_len 0
+python eval_longbench_v2.py --model preds/flashattn/longbenchv2_128K-Meta-Llama-3.1-8B-Instruct
+
