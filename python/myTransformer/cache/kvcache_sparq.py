@@ -3,7 +3,7 @@ import torch
 from transformers.configuration_utils import PretrainedConfig
 from transformers.generation.configuration_utils import GenerationConfig
 from .kvcache_fa import CustomStaticCache
-from .kernels.triton_qk_score import sparq_qk_score
+from .kernels.triton_qk_score import sparq_qk_score, sparq_qk_score_v2
 import KVLib
 import os
 
@@ -36,14 +36,46 @@ class SparQStaticCache(CustomStaticCache):
     def compute_topk(self, query: torch.Tensor, layer_idx: int):
         assert layer_idx >= self.num_skip_layers, f"partial topk is not enabled in layer{layer_idx}!"
         torch.cuda.nvtx.range_push("partial score")
-        query_ = query.abs()
+        abs_query = query.abs()
+
+        # compute channel index
         if self.gqa_size > 1:
-            query_ = query_.view(self.curr_batch_size, -1,
-                                 self.num_key_value_heads, self.gqa_size,
-                                 self.head_dim).sum(3)
-        channel_index = torch.topk(query_, self.r_channel, dim=-1).indices
-        score = sparq_qk_score(query, self.layer_caches[layer_idx][0],
-                               self.seq_len, channel_index)
+            reduce_abs_query = abs_query.view(self.curr_batch_size,
+                                              self.num_key_value_heads,
+                                              self.gqa_size, 1,
+                                              self.head_dim).sum(2)
+        else:
+            reduce_abs_query = abs_query.view(self.curr_batch_size,
+                                              self.num_key_value_heads, 1,
+                                              self.head_dim)
+        channel_index = torch.topk(
+            reduce_abs_query, self.r_channel,
+            dim=-1).indices  # shape [bsz, num_kv_heads, 1, r_channel]
+
+        # generate partial_query
+        channel_index_expand = channel_index.expand(
+            -1, -1, self.gqa_size, -1).reshape(self.curr_batch_size, 1,
+                                               self.num_heads, self.r_channel)
+        # not need for transpose for query, as sequence for query is 1
+        partial_query = torch.gather(query, -1, channel_index_expand)
+
+        # compute scale
+        scale = torch.sqrt(self.head_dim *
+                           partial_query.abs().sum(dim=-1, keepdim=True) /
+                           abs_query.sum(dim=-1, keepdim=True))
+
+        ## compute score
+        ## shape for score: [bsz, num_head, seq_len]
+        score = sparq_qk_score_v2(partial_query,
+                                  self.layer_caches[layer_idx][0], scale,
+                                  self.seq_len, channel_index)
+        score = torch.softmax(score.to(torch.float32),
+                              dim=-1).to(torch.float16)
+        if self.gqa_size > 1:
+            score = score.view(self.curr_batch_size, self.num_key_value_heads,
+                               self.gqa_size, self.seq_len)
+            score = torch.sum(score, dim=2)
+
         if self.num_sink > 0:
             score[:, :, :self.num_sink] = torch.finfo(score.dtype).max
         if self.num_recent > 0:

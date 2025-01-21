@@ -136,6 +136,13 @@ class LokiStaticCache(CustomStaticCache):
         torch.cuda.nvtx.range_push("partial score")
         score = loki_qk_score(query, self.layer_caches[layer_idx][0],
                               self.seq_len, self.partial_dim)
+        # score shape = [batch_size, head_num, seq_len]
+        score = torch.softmax(score.to(torch.float32),
+                              dim=-1).to(torch.float16)
+        score = score.view(self.curr_batch_size, self.num_key_value_heads,
+                           self.gqa_size, self.seq_len)
+        score = torch.sum(score, dim=2)
+
         if self.num_sink > 0:
             score[:, :, :self.num_sink] = torch.finfo(score.dtype).max
         if self.num_recent > 0:

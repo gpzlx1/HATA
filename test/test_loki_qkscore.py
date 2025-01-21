@@ -1,15 +1,17 @@
 import torch
+import math
 from functools import partial
 from myTransformer.cache.kernels.triton_qk_score import loki_qk_score
 
-bsz = 2
+bsz = 1
 num_heads = 32
-num_kv_heads = 8
+num_kv_heads = 2
 seq_len = 100000
 head_dim = 128
 partial_dim = 32
 
-device = "cuda:0"
+device = "cuda:7"
+torch.cuda.set_device(device)
 dtype = torch.float16
 
 query = torch.randn(
@@ -34,7 +36,9 @@ def torch_loki_qk_score(query, key, seq_len, partial_dim):
         1, 2).unsqueeze(2).expand(-1, -1, gqa, -1,
                                   -1).reshape(b, h, seq_len, partial_dim)
     score = key @ query
-    score = score.view(b, hk, gqa, -1).sum(2)
+    score = score.squeeze(-1)
+    score = score.to(torch.float32)
+    score = score / math.sqrt(head_dim)
     return score
 
 
@@ -47,6 +51,7 @@ print(triton_out)
 print(triton_out.shape)
 
 print((torch_out - triton_out).abs().max())
+torch.cuda.synchronize()
 
 
 def bench(func):
