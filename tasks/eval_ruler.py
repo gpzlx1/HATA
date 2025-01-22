@@ -65,13 +65,15 @@ dataset2metric = {
 }
 
 
-def postprocess_pred(predict_str: str):
+def postprocess_pred(predict_str: str, is_niah=False):
 
     predict_str = predict_str.strip()
 
     # Remove all non-printable characters
     np_pattern = re.compile(r'[\x00-\x1f]')
     predict_str = np_pattern.sub('\n', predict_str).strip()
+    if is_niah:
+        predict_str = predict_str.replace(",", "")
 
     return predict_str
 
@@ -105,10 +107,13 @@ if __name__ == '__main__':
             continue
         predictions, answers = [], []
         dataset = filename.split('.')[0]
+        dataset_type = dataset.split('_')[0]
         with open(os.path.join(path, filename), "r", encoding="utf-8") as f:
             for line in f:
                 data = json.loads(line)
-                predictions.append(postprocess_pred(data["pred"]))
+                predictions.append(
+                    postprocess_pred(data["pred"],
+                                     is_niah=dataset_type == "niah"))
                 answers.append(data["answers"])
         score = scorer(dataset, predictions, answers)
         scores[dataset] = score
