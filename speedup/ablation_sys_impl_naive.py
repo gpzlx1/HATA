@@ -56,14 +56,19 @@ def torch_hamming_distance(query_code: torch.Tensor,
 
     if gqa > 1:
         key_code = key_code_cache[:, :seq_len, :, :].unsqueeze(-2).expand(
-            -1, -1, -1, gqa, -1).reshape(b, 1, h, r)
+            -1, -1, -1, gqa, -1).reshape(b, seq_len, h, r)
         key_norm = key_norm_cache[:, :seq_len, :].unsqueeze(-1).expand(
-            -1, -1, -1, gqa).reshape(b, 1, h)
+            -1, -1, -1, gqa).reshape(b, seq_len, h)
     else:
         key_code = key_code_cache[:, :seq_len, :, :]
         key_norm = key_norm_cache[:, :seq_len, :]
 
-    return torch_hamming_distance_kernel(query_code, key_code, key_norm, r)
+    hash_score = torch_hamming_distance_kernel(query_code, key_code, key_norm,
+                                               r)
+
+    if gqa > 1:
+        hash_score = hash_score.view(b, hkv, gqa, seq_len).sum(2)
+    return hash_score
 
 
 if __name__ == "__main__":
