@@ -418,7 +418,7 @@ class CustomGLMBlock(GLMBlock):
             if layer_idx >= kv_cache.get_num_skip_layers(
             ) - 1 and layer_idx < kv_cache.num_layers - 1:
                 kv_cache.register_query(
-                    hidden_states.to(kv_cache.layer_devices[layer_idx + 1]))
+                    layernorm_output.to(kv_cache.layer_devices[layer_idx + 1]))
             else:
                 kv_cache.register_query(None)
 
