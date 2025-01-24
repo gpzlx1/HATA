@@ -295,6 +295,12 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
                 from myTransformer.models.llama.modeling_llama_infinigen_sim_prefetch import CustomLlamaForCausalLM
                 model = CustomLlamaForCausalLM.from_pretrained(
                     model_name_or_path, config=model_config)
+            elif model_arch == "glm":
+                from myTransformer.models.glm.modeling_glm_infinigen_sim_prefetch_v2 import CustomGlmForCausalLM
+                model = CustomGlmForCausalLM.from_pretrained(
+                    model_name_or_path,
+                    config=model_config,
+                    trust_remote_code=True)
             else:
                 raise NotImplementedError(
                     f"{method} not implemented for {model_arch} models!")
