@@ -195,7 +195,7 @@ class CustomLlamaAttention(LlamaFlashAttention2):
                 partial_query = past_key_value.skewing_query(
                     prev_query, self.layer_idx)
                 partial_query = past_key_value.decode_partial_query(
-                    query_states, self.layer_idx)
+                    partial_query, self.layer_idx)
                 torch.cuda.nvtx.range_pop()
         else:
             torch.cuda.nvtx.range_push("append kcache")
