@@ -185,6 +185,15 @@ class CustomLlamaAttention(LlamaFlashAttention2):
                                                    type="key",
                                                    inc_seq_len=False)
                 past_key_value.decode_partial_key(key_states, self.layer_idx)
+                prev_query = past_key_value.get_query()
+                prev_query = self.q_proj(prev_query)
+                prev_query = prev_query.view(-1, self.num_heads, self.head_dim)
+                prev_query, _ = self.rotary_emb(prev_query, prev_query,
+                                                past_key_value)
+                prev_query = prev_query.view(batch_size, 1, self.num_heads,
+                                             self.head_dim)
+                partial_query = past_key_value.skewing_query(
+                    prev_query, self.layer_idx)
                 partial_query = past_key_value.decode_partial_query(
                     query_states, self.layer_idx)
                 torch.cuda.nvtx.range_pop()
@@ -222,7 +231,7 @@ class CustomLlamaAttention(LlamaFlashAttention2):
             torch.cuda.nvtx.range_push("compute topk")
             topk_indices = past_key_value.compute_topk(partial_query,
                                                        self.layer_idx,
-                                                       sim_prefetch=False)
+                                                       sim_prefetch=True)
             torch.cuda.nvtx.range_pop()
             torch.cuda.nvtx.range_push("sparse attention")
             attn_output, _ = KVLib.flash_index_decode(query_states, key_states,
@@ -273,6 +282,17 @@ class CustomLlamaDecoderLayer(LlamaDecoderLayer):
         torch.cuda.nvtx.range_push("layer norm")
         hidden_states = self.input_layernorm(hidden_states)
         torch.cuda.nvtx.range_pop()
+
+        if past_key_value.get_cur_q_len() == 1:
+            layer_idx = self.self_attn.layer_idx
+            # record current layer input
+            if layer_idx >= past_key_value.get_num_skip_layers(
+            ) - 1 and layer_idx < past_key_value.num_layers - 1:
+                past_key_value.register_query(
+                    hidden_states.to(past_key_value.layer_devices[layer_idx +
+                                                                  1]))
+            else:
+                past_key_value.register_query(None)
 
         # Self Attention
         hidden_states, self_attn_weights, present_key_value = self.self_attn(

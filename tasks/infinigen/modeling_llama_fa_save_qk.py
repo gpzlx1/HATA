@@ -13,12 +13,10 @@ from transformers.utils import logging
 from typing import Optional, Tuple, Union
 from transformers.modeling_outputs import BaseModelOutputWithPast
 
-from ...cache.kvcache_infinigen import InfiniGenStaticCache, prepare_cache_for_generation
-from ..utils import SiLUAndMul
+from myTransformer.cache.kvcache_fa import CustomStaticCache, prepare_cache_for_generation
+from myTransformer.models.utils import SiLUAndMul
 import flashinfer
 from transformers.modeling_flash_attention_utils import _flash_attention_forward
-import KVLib
-import math
 
 logger = logging.get_logger(__name__)
 
@@ -110,14 +108,13 @@ class CustomLlamaAttention(LlamaFlashAttention2):
     def __init__(self, config, layer_idx):
         super().__init__(config, layer_idx)
         self.rotary_emb = CustomLlamaRotaryEmbedding(config)
-        self.sacle = 1 / math.sqrt(self.head_dim)
 
     def forward(
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.LongTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[InfiniGenStaticCache] = None,
+        past_key_value: Optional[CustomStaticCache] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
@@ -128,112 +125,52 @@ class CustomLlamaAttention(LlamaFlashAttention2):
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor],
                Optional[Tuple[torch.Tensor]]]:
 
-        torch.cuda.nvtx.range_push("qkv_proj")
         batch_size = past_key_value.curr_batch_size
         q_len = past_key_value.get_cur_q_len()
         _, hidden_size = hidden_states.size()
-        is_prefill = q_len > 1
 
         query_states = self.q_proj(hidden_states)
-        key_states = self.k_proj(hidden_states)
-        value_states = self.v_proj(hidden_states)
-        torch.cuda.nvtx.range_pop()
-
-        torch.cuda.nvtx.range_push("rope")
         query_states = query_states.view(-1, self.num_heads, self.head_dim)
+
+        key_states = self.k_proj(hidden_states)
         key_states = key_states.view(-1, self.num_key_value_heads,
                                      self.head_dim)
+
+        value_states = self.v_proj(hidden_states)
+        value_states = value_states.view(-1, self.num_key_value_heads,
+                                         self.head_dim)
+
         query_states, key_states = self.rotary_emb(query_states, key_states,
                                                    past_key_value)
 
-        query_states = query_states.view(batch_size, q_len, self.num_heads,
+        key_states = key_states.view(-1, self.num_key_value_heads,
+                                     self.head_dim)
+        if q_len > 1:
+            self.post_rotary_query = query_states
+            self.post_rotary_key = key_states
+
+        batch_size = past_key_value.curr_batch_size
+        query_states = query_states.view(batch_size, -1, self.num_heads,
                                          self.head_dim)
-        key_states = key_states.view(batch_size, q_len,
-                                     self.num_key_value_heads, self.head_dim)
-        value_states = value_states.view(batch_size, q_len,
-                                         self.num_key_value_heads,
-                                         self.head_dim)
-        torch.cuda.nvtx.range_pop()
+        key_states = key_states.view(batch_size, -1, self.num_key_value_heads,
+                                     self.head_dim)
+        value_states = key_states.view(batch_size, -1,
+                                       self.num_key_value_heads, self.head_dim)
 
-        # apply SVD on key, query
-        if self.layer_idx >= past_key_value.get_num_skip_layers():
-            if is_prefill:
-                torch.cuda.nvtx.range_push("apply svd")
-                query_states_svd = past_key_value.skewing_query(
-                    query_states, self.layer_idx)
-                key_states_svd = past_key_value.skewing_key(
-                    key_states, self.layer_idx)
-                torch.cuda.nvtx.range_pop()
-                torch.cuda.nvtx.range_push("append kcache")
-                past_key_value.append(key_states_svd,
-                                      self.layer_idx,
-                                      type="key",
-                                      inc_seq_len=False)
-                past_key_value.prefill_partial_query_key(
-                    query_states_svd, key_states_svd, self.layer_idx)
-                torch.cuda.nvtx.range_pop()
-            else:
-                torch.cuda.nvtx.range_push("apply pca")
-                query_states = past_key_value.skewing_query(
-                    query_states, self.layer_idx)
-                key_states = past_key_value.skewing_key(
-                    key_states, self.layer_idx)
-                torch.cuda.nvtx.range_pop()
-                torch.cuda.nvtx.range_push("append kcache")
-                key_states = past_key_value.append(key_states,
-                                                   self.layer_idx,
-                                                   type="key",
-                                                   inc_seq_len=False)
-                past_key_value.decode_partial_key(key_states, self.layer_idx)
-                partial_query = past_key_value.decode_partial_query(
-                    query_states, self.layer_idx)
-                torch.cuda.nvtx.range_pop()
-        else:
-            torch.cuda.nvtx.range_push("append kcache")
-            key_states = past_key_value.append(key_states,
-                                               self.layer_idx,
-                                               type="key",
-                                               inc_seq_len=False)
-            torch.cuda.nvtx.range_pop()
-
-        torch.cuda.nvtx.range_push("append vcache")
-        value_states = past_key_value.append(value_states,
-                                             self.layer_idx,
-                                             type="value",
-                                             inc_seq_len=True)
-        torch.cuda.nvtx.range_pop()
-
-        if is_prefill or self.layer_idx < past_key_value.get_num_skip_layers():
-            torch.cuda.nvtx.range_push("full attention")
-            attn_output = _flash_attention_forward(
-                query_states,
-                key_states,
-                value_states,
-                attention_mask,
-                q_len,
-                position_ids=position_ids,
-                dropout=0,
-                sliding_window=getattr(self, "sliding_window", None),
-                use_top_left_mask=self._flash_attn_uses_top_left_mask,
-                is_causal=self.is_causal,
-            )
-            torch.cuda.nvtx.range_pop()
-        else:
-            torch.cuda.nvtx.range_push("compute topk")
-            topk_indices = past_key_value.compute_topk(partial_query,
-                                                       self.layer_idx,
-                                                       sim_prefetch=False)
-            torch.cuda.nvtx.range_pop()
-            torch.cuda.nvtx.range_push("sparse attention")
-            attn_output, _ = KVLib.flash_index_decode(query_states, key_states,
-                                                      value_states,
-                                                      topk_indices, self.sacle)
-            torch.cuda.nvtx.range_pop()
-
-        torch.cuda.nvtx.range_push("output proj")
+        attn_output = _flash_attention_forward(
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
+            q_len,
+            position_ids=position_ids,
+            dropout=0,
+            sliding_window=getattr(self, "sliding_window", None),
+            use_top_left_mask=self._flash_attn_uses_top_left_mask,
+            is_causal=self.is_causal,
+        )
         attn_output = attn_output.view(-1, hidden_size)
         attn_output = self.o_proj(attn_output)
-        torch.cuda.nvtx.range_pop()
 
         return attn_output, None, past_key_value
 
@@ -254,7 +191,7 @@ class CustomLlamaDecoderLayer(LlamaDecoderLayer):
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[InfiniGenStaticCache] = None,
+        past_key_value: Optional[CustomStaticCache] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
@@ -270,9 +207,7 @@ class CustomLlamaDecoderLayer(LlamaDecoderLayer):
 
         residual = hidden_states
 
-        torch.cuda.nvtx.range_push("layer norm")
         hidden_states = self.input_layernorm(hidden_states)
-        torch.cuda.nvtx.range_pop()
 
         # Self Attention
         hidden_states, self_attn_weights, present_key_value = self.self_attn(
@@ -286,8 +221,6 @@ class CustomLlamaDecoderLayer(LlamaDecoderLayer):
             position_embeddings=position_embeddings,
             **kwargs,
         )
-
-        torch.cuda.nvtx.range_push("FFN")
         hidden_states = residual + hidden_states
 
         # Fully Connected
@@ -298,7 +231,6 @@ class CustomLlamaDecoderLayer(LlamaDecoderLayer):
         hidden_states = self.mlp(hidden_states)
 
         hidden_states = residual + hidden_states
-        torch.cuda.nvtx.range_pop()
 
         outputs = (hidden_states, )
 
@@ -341,7 +273,7 @@ class CustomLlamaModel(LlamaModel):
         input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[InfiniGenStaticCache] = None,
+        past_key_values: Optional[CustomStaticCache] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,

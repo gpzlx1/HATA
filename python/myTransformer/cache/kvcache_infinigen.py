@@ -4,17 +4,8 @@ from transformers.configuration_utils import PretrainedConfig
 from transformers.generation.configuration_utils import GenerationConfig
 from .kvcache_fa import CustomStaticCache
 import os
-
-
-def qk_score(query, key, seq_len):
-    b, _, hk, d = key.shape
-    h = query.shape[-2]
-
-    query = query.transpose(1, 2).transpose(-1, -2)
-    key = key[:, :seq_len, :, :].transpose(1, 2).unsqueeze(2).expand(
-        -1, -1, h // hk, -1, -1).reshape(b, h, seq_len, d)
-    score = key @ query
-    return score.squeeze(-1)
+from .kernels.triton_qk_score import qk_score
+import math
 
 
 class InfiniGenStaticCache(CustomStaticCache):
@@ -22,7 +13,7 @@ class InfiniGenStaticCache(CustomStaticCache):
     def __init__(
         self,
         config: PretrainedConfig,
-        num_channels: int,
+        num_channels: int = 32,
         device: torch.device = None,
         dtype: torch.dtype = torch.float16,
         max_gpu_cache_memory_size: int = 1000000000,  # 0.93 GB
@@ -30,31 +21,65 @@ class InfiniGenStaticCache(CustomStaticCache):
                                                    int]]] = None,
         sparse_ratio: float = 0.1,
         num_skip_layers: int = 2,
-        skewing_matrix_path: str = None,
+        aux_data_path: str = None,
+        num_sink: int = 0,
+        num_recent: int = 0,
     ) -> None:
         super().__init__(config, device, dtype, max_gpu_cache_memory_size,
                          layer_device_map)
         self.partial_dim = num_channels
         self.sparse_ratio = sparse_ratio
-        self.skewing_matrix_path = skewing_matrix_path
+        self.aux_data_path = aux_data_path
         self.num_skip_layers = num_skip_layers
-        self.gqa_size = 1
-        self.num_key_value_heads = self.num_heads
+        self.gqa_size = self.num_heads // self.num_key_value_heads
+        self.num_sink = num_sink
+        self.num_recent = num_recent
+
+    def load_aux_data(self):
+        self.skewing_matrix = []
+        self.skewing_matrix_expand = []
+        for l in range(self.num_layers):
+            if l < self.num_skip_layers:
+                self.skewing_matrix.append(None)
+                self.skewing_matrix_expand.append(None)
+            else:
+                svd = torch.load(
+                    os.path.join(self.aux_data_path,
+                                 f"skewing_martix_{l:02d}.pt")).view(
+                                     1, self.num_key_value_heads,
+                                     self.head_dim, self.head_dim).to(
+                                         self.dtype).to(self.layer_devices[l])
+                self.skewing_matrix.append(svd)
+                if self.gqa_size > 1:
+                    svd_expand = svd.unsqueeze(2).expand(
+                        -1, -1, self.gqa_size, -1,
+                        -1).reshape(-1, self.num_heads, self.head_dim,
+                                    self.head_dim)
+                    self.skewing_matrix_expand.append(svd_expand)
+                else:
+                    self.skewing_matrix_expand.append(None)
+        if self.gqa_size > 1:
+            self.aux_data_size = (
+                self.num_key_value_heads + self.num_heads
+            ) * self.head_dim * self.head_dim * self.dtype.itemsize * (
+                self.num_layers - self.num_skip_layers)
+        else:
+            self.aux_data_size = self.num_key_value_heads * self.head_dim * self.head_dim * self.dtype.itemsize * (
+                self.num_layers - self.num_skip_layers)
 
     def build_cache(self):
-
+        self.load_aux_data()
         self.layer_caches = []
         self.max_layer_caches = []
 
         self.layer_partial_caches = []
         self.max_layer_partial_caches = []
 
-        self.skewing_matrix = []
-
         kv_ratio = 2 * self.num_layers * self.head_dim
         partial_key_ratio = (self.num_layers -
                              self.num_skip_layers) * self.partial_dim
 
+        self.max_gpu_cache_memory_size -= self.aux_data_size
         self.max_kv_cache_size = self.max_gpu_cache_memory_size * kv_ratio / (
             kv_ratio + partial_key_ratio)
         self.max_partial_cache_size = self.max_gpu_cache_memory_size * partial_key_ratio / (
@@ -84,21 +109,14 @@ class InfiniGenStaticCache(CustomStaticCache):
                     torch.zeros((partial_numel, ),
                                 dtype=self.dtype,
                                 device=layer_device))
-                self.skewing_matrix.append(
-                    torch.load(
-                        os.path.join(self.skewing_matrix_path,
-                                     f"skewing_martix_{l:02d}.pt")).to(
-                                         layer_device)[None, :, :, :])
             else:
                 self.max_layer_partial_caches.append(None)
-                self.skewing_matrix.append(None)
 
         self.max_seq_len = 0
         self.curr_batch_size = 0
         self.seq_len = 0
         self.layer_partial_seq_lens = [0 for l in range(self.num_layers)]
-
-        self.partial_idx = [None for _ in range(self.num_layers)]
+        self.partial_idx = [None for l in range(self.num_layers)]
 
     def reset(self, batch_size):
         self.curr_batch_size = batch_size
@@ -128,11 +146,51 @@ class InfiniGenStaticCache(CustomStaticCache):
                     i].view(batch_size, self.max_seq_len,
                             self.num_key_value_heads, self.partial_dim)
 
-        self.partial_idx = [None for _ in range(self.num_layers)]
+        self.partial_idx = [None for l in range(self.num_layers)]
         self.prev_query = None
         self.curr_query = None
 
-    def prefill_encode_partial(self, query, key, layer_idx):
+    def skewing_key(self, key, layer_idx):
+        assert layer_idx >= self.num_skip_layers, f"skewing is not enabled in layer{layer_idx}!"
+        seq_len = key.shape[1]
+        if seq_len > 1:
+            key = key.transpose(
+                1, 2)  # (b, h, s, d) to reduce cuda mem used during matmul
+            key = torch.matmul(key, self.skewing_matrix[layer_idx])
+            key = key.transpose(1, 2)  # (b, s, h, d)
+        else:
+            key = key.view(self.curr_batch_size, self.num_key_value_heads, 1,
+                           self.head_dim)
+            key = torch.matmul(key, self.skewing_matrix[layer_idx])
+            key = key.view(self.curr_batch_size, 1, self.num_key_value_heads,
+                           self.head_dim)
+        return key
+
+    def skewing_query(self, query, layer_idx):
+        assert layer_idx >= self.num_skip_layers, f"skewing is not enabled in layer{layer_idx}!"
+        seq_len = query.shape[1]
+        if seq_len > 1:
+            query = query.transpose(
+                1, 2)  # (b, h, s, d) to reduce cuda mem used during matmul
+            if self.gqa_size > 1:
+                query = torch.matmul(query,
+                                     self.skewing_matrix_expand[layer_idx])
+            else:
+                query = torch.matmul(query, self.skewing_matrix[layer_idx])
+            query = query.transpose(1, 2)  # (b, s, h, d)
+        else:
+            query = query.view(self.curr_batch_size, self.num_heads, 1,
+                               self.head_dim)
+            if self.gqa_size > 1:
+                query = torch.matmul(query,
+                                     self.skewing_matrix_expand[layer_idx])
+            else:
+                query = torch.matmul(query, self.skewing_matrix[layer_idx])
+            query = query.view(self.curr_batch_size, 1, self.num_heads,
+                               self.head_dim)
+        return query
+
+    def prefill_partial_query_key(self, query, key, layer_idx):
         assert layer_idx >= self.num_skip_layers, f"partial topk is not enabled in layer{layer_idx}!"
         seq_len = key.shape[1]
         query = torch.abs(query)
@@ -153,7 +211,7 @@ class InfiniGenStaticCache(CustomStaticCache):
         self.layer_partial_caches[layer_idx][:, :seq_len, :, :] = key
         self.layer_partial_seq_lens[layer_idx] = seq_len
 
-    def decode_encode_partial_key(self, key, layer_idx):
+    def decode_partial_key(self, key, layer_idx):
         assert layer_idx >= self.num_skip_layers, f"partial topk is not enabled in layer{layer_idx}!"
         partial_idx = self.partial_idx[layer_idx]
 
@@ -163,7 +221,7 @@ class InfiniGenStaticCache(CustomStaticCache):
                        layer_partial_seq_lens[layer_idx] + 1, :, :] = key
         self.layer_partial_seq_lens[layer_idx] += 1
 
-    def decode_encode_partial_query(self, query, layer_idx):
+    def decode_partial_query(self, query, layer_idx):
         assert layer_idx >= self.num_skip_layers, f"partial topk is not enabled in layer{layer_idx}!"
         partial_idx = self.partial_idx[layer_idx]
 
@@ -173,7 +231,7 @@ class InfiniGenStaticCache(CustomStaticCache):
                                self.head_dim)
             query = torch.gather(query,
                                  dim=-1,
-                                 index=partial_idx.unsqueeuze(-1).expand(
+                                 index=partial_idx.unsqueeze(3).expand(
                                      -1, -1, -1, self.gqa_size, -1))
             query = query.view(self.curr_batch_size, 1, self.num_heads,
                                self.partial_dim)
@@ -182,33 +240,39 @@ class InfiniGenStaticCache(CustomStaticCache):
 
         return query
 
-    def compute_topk(self, query: torch.Tensor, layer_idx: int):
+    def compute_topk(self,
+                     query: torch.Tensor,
+                     layer_idx: int,
+                     sim_prefetch=False):
         assert layer_idx >= self.num_skip_layers, f"partial topk is not enabled in layer{layer_idx}!"
         torch.cuda.nvtx.range_push("partial score")
+        kvcache_len = self.layer_partial_seq_lens[layer_idx]
         score = qk_score(query, self.layer_partial_caches[layer_idx],
-                         self.layer_partial_seq_lens[layer_idx])
+                         kvcache_len)
+        # score shape = [batch_size, head_num, seq_len]
+        score = torch.softmax(score.to(torch.float32) /
+                              math.sqrt(self.head_dim),
+                              dim=-1).to(torch.float16)
+        score = score.view(self.curr_batch_size, self.num_key_value_heads,
+                           self.gqa_size, kvcache_len)
+        score = torch.sum(score, dim=2)
 
-        if self.gqa_size > 1:
-            score = score.view(self.curr_batch_size, self.num_key_value_heads,
-                               self.gqa_size, -1).sum(-2)
-            # Simulate prefetch scenario, where the last token must be selected
+        if self.num_sink > 0:
+            score[:, :, :self.num_sink] = torch.finfo(score.dtype).max
+        if self.num_recent > 0:
+            score[:, :, -self.num_recent:] = torch.finfo(score.dtype).max
+        if sim_prefetch:
             score[:, :, -1:] = torch.finfo(score.dtype).max
         torch.cuda.nvtx.range_pop()
 
         torch.cuda.nvtx.range_push("compute topk")
-        # Simulate prefetch scenario, where the last token must be selected
         if self.sparse_ratio < 1:
-            fetch_num = int((self.layer_partial_seq_lens[layer_idx] - 1) *
-                            self.sparse_ratio) + 1
+            fetch_num = int(kvcache_len * self.sparse_ratio)
         else:
-            fetch_num = min(
-                int(self.sparse_ratio) + 1,
-                self.layer_partial_seq_lens[layer_idx])
-
+            fetch_num = min(int(self.sparse_ratio), kvcache_len)
         # topk_indices = KVLib.batch_topk(score, fetch_num, True)
         topk_indices = torch.topk(score, fetch_num, dim=-1,
                                   largest=True).indices.int()
-
         torch.cuda.nvtx.range_pop()
 
         return topk_indices
@@ -222,11 +286,6 @@ class InfiniGenStaticCache(CustomStaticCache):
 
     def get_query(self):
         return self.prev_query
-
-    def skew(self, states, layer_idx):
-        states = torch.matmul(states.transpose(1, 2),
-                              self.skewing_matrix[layer_idx])
-        return states.transpose(1, 2).contiguous()
 
 
 """
@@ -282,7 +341,9 @@ def prepare_cache_for_generation(
             dtype=self.dtype,
             layer_device_map=layer_device_map,
             sparse_ratio=generation_config.sparse_ratio,
-            skewing_matrix_path=generation_config.skewing_matrix_path,
+            aux_data_path=generation_config.aux_data_path,
+            num_sink=generation_config.num_sink,
+            num_recent=generation_config.num_recent,
         )
         self._cache.build_cache()
 

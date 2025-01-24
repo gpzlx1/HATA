@@ -271,21 +271,33 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
             raise NotImplementedError(
                 f"{method} not implemented for {model_arch} models!")
 
-    elif method == "infinigen":
+    elif "infinigen" in method:
         generate_config = {
-            "max_gpu_cache_memory": 19 * 1024 * 1024 * 1024,
-            "num_channels": 38,
-            "skewing_matrix_path": os.environ["SKEWING_PATH"],
+            "max_gpu_cache_memory":
+            float(os.environ["CUDA_MEM"]) * 1024 * 1024 * 1024,
+            "num_channels": int(os.environ["RCHANNEL"]),
             "sparse_ratio": float(os.environ["TOPK_RATIO"]),
+            "aux_data_path": os.environ["SVD_PATH"],
+            "num_sink": int(os.environ["NUM_SINK"]),
+            "num_recent": int(os.environ["NUM_RECENT"]),
         }
         model_config._attn_implementation = "flash_attention_2"
-        if model_arch == "llama":
-            from myTransformer.models.llama.modeling_llama_infinigen import CustomLlamaForCausalLM
-            model = CustomLlamaForCausalLM.from_pretrained(model_name_or_path,
-                                                           config=model_config)
+        if method == "infinigen":
+            if model_arch == "llama":
+                from myTransformer.models.llama.modeling_llama_infinigen import CustomLlamaForCausalLM
+                model = CustomLlamaForCausalLM.from_pretrained(
+                    model_name_or_path, config=model_config)
+            else:
+                raise NotImplementedError(
+                    f"{method} not implemented for {model_arch} models!")
         else:
-            raise NotImplementedError(
-                f"{method} not implemented for {model_arch} models!")
+            if model_arch == "llama":
+                from myTransformer.models.llama.modeling_llama_infinigen_sim_prefetch import CustomLlamaForCausalLM
+                model = CustomLlamaForCausalLM.from_pretrained(
+                    model_name_or_path, config=model_config)
+            else:
+                raise NotImplementedError(
+                    f"{method} not implemented for {model_arch} models!")
 
     # unset to avoid some warning
     model.generation_config.temperature = None
