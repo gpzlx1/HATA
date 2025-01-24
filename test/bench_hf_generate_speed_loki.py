@@ -18,16 +18,12 @@ def bench_prefill_decode_speed(model, tokenizer, prefill_len, batch_size):
     input_text = "A " * prefill_len
 
     generation_kwargs = {
-        "max_gpu_cache_memory": 20 * 1024 * 1024 * 1024,  # 30GB
-        # "page_num": 1000,
-        # "page_size": 16,
-        "hash_rbits": 128,
-        "hash_weights_path":
-        None,
-        # "/root/workspace/myoffloading/model_weights/Meta-Llama-3.1-8B-Instruct-128",
+        "max_gpu_cache_memory":
+        20 * 1024 * 1024 * 1024,
+        "num_channels": 32,
         "sparse_ratio": 1024,
-        "with_bias": False,
-        "use_norm": True,
+        "aux_data_path": "/root/data/loki_pca/Meta-Llama-3.1-8B-Instruct/",
+        # "aux_data_path": "/root/data/loki_pca/Llama-2-7B-32K-Instruct/",
         "num_sink": 0,
         "num_recent": 0,
     }
@@ -81,7 +77,7 @@ def bench_prefill_decode_speed(model, tokenizer, prefill_len, batch_size):
 
 
 if __name__ == "__main__":
-    device = "cuda:7"
+    device = "cuda:6"
     torch.cuda.set_device(device)
 
     # model_path = "/nfs/shared_LLM_model/meta-llama/Llama-2-7b-chat-hf"
@@ -97,7 +93,7 @@ if __name__ == "__main__":
     config.torch_dtype = torch.float16
 
     print(config)
-    from myTransformer.models.llama.modeling_llama_hash import CustomLlamaForCausalLM
+    from myTransformer.models.llama.modeling_llama_loki import CustomLlamaForCausalLM
     model = CustomLlamaForCausalLM.from_pretrained(model_path,
                                                    torch_dtype=torch.float16,
                                                    config=config)

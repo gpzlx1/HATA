@@ -2,17 +2,17 @@
 
 ############################### compile for decode_hash_encode ###############################
 python3 -m triton.tools.compile \
-     -n "_decode_hash_encode" \
+     -n "_decode_multi_hash_encode" \
      -w 4 \
      -ns 1 \
-     -on "_decode_hash_encode_rbit128_dim128_kernel" \
-     -o "decode_hash_encode_rbit128_dim128" \
-     -s "*fp16,i64, *fp16,i64, *fp16,*i32, *i32,i64, *fp16,i64, *i32,i64, i32,i32,i32,i32, 128,128,16" \
-     -g 4,1,4 ./python/myTransformer/cache/kernels/triton_hash_encode.py
+     -on "_decode_multi_hash_encode_rbit256_dim128_kernel" \
+     -o "decode_multi_hash_encode_rbit256_dim128" \
+     -s "*fp16,i64, *fp16,i64, *fp16,*i32, *i32,i64, *fp16,i64, *i32,i64, i32,i32,i32,i32, 256,128,16" \
+     -g 2,2,8 ./python/myTransformer/cache/kernels/triton_hash_encode.py
 
 sleep 3
-mv decode_hash_encode_rbit128_dim128*.c ./test_triton_compile/decode_hash_encode_rbit128_dim128.c
-mv decode_hash_encode_rbit128_dim128*.h ./test_triton_compile/decode_hash_encode_rbit128_dim128.h
+mv decode_multi_hash_encode_rbit256_dim128*.c ./src/decode_multi_hash_encode_rbit256_dim128.c
+mv decode_multi_hash_encode_rbit256_dim128*.h ./src/decode_multi_hash_encode_rbit256_dim128.h
 
 # python3 -m triton.tools.compile \
 #      -n "_decode_hash_encode" \

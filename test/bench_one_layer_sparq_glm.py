@@ -1,15 +1,15 @@
 import torch
-from transformers import LlamaForCausalLM, AutoTokenizer, AutoConfig
+from transformers import AutoTokenizer, AutoConfig
 import time
 import numpy as np
 import os
-from myTransformer.models.llama.modeling_llama_sparq import CustomLlamaDecoderLayer
+from myTransformer.models.glm.modeling_glm_sparq_v2 import CustomGLMBlock
 from myTransformer.cache.kvcache_sparq import SparQStaticCache
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
-def bench(layer: CustomLlamaDecoderLayer,
+def bench(layer: CustomGLMBlock,
           kvcache: SparQStaticCache,
           batch_size,
           prefill_len,
@@ -17,9 +17,9 @@ def bench(layer: CustomLlamaDecoderLayer,
           device,
           dtype=torch.float16):
 
-    warmup = 2
-    bench_epoch = 5
-    hidden_size = layer.self_attn.hidden_size
+    warmup = 3
+    bench_epoch = 10
+    hidden_size = layer.self_attention.projection_size
 
     prefill_position_ids = torch.arange(0, prefill_len,
                                         device=device).unsqueeze(0)
@@ -46,15 +46,13 @@ def bench(layer: CustomLlamaDecoderLayer,
             ]
 
             kvcache.alloc(prefill_len)
-            layer(prefill_hidden, None, prefill_position_ids, kvcache, False,
-                  True, None, None)
+            layer(prefill_hidden, None, prefill_position_ids, kvcache, True)
 
             kvcache.alloc(1)
 
             for j in range(decode_step):
 
-                layer(decode_hidden[i], None, None, kvcache, False, True, None,
-                      None)
+                layer(decode_hidden[i], None, None, kvcache, True)
 
         # bench
         for i in range(bench_epoch):
@@ -75,8 +73,7 @@ def bench(layer: CustomLlamaDecoderLayer,
             torch.cuda.synchronize()
             tic = time.time()
             kvcache.alloc(prefill_len)
-            layer(prefill_hidden, None, prefill_position_ids, kvcache, False,
-                  True, None, None)
+            layer(prefill_hidden, None, prefill_position_ids, kvcache, True)
             torch.cuda.synchronize()
             toc = time.time()
             prefill_time.append(toc - tic)
@@ -85,8 +82,7 @@ def bench(layer: CustomLlamaDecoderLayer,
             tic = time.time()
             kvcache.alloc(1)
             for j in range(decode_step):
-                layer(decode_hidden[i], None, None, kvcache, False, True, None,
-                      None)
+                layer(decode_hidden[i], None, None, kvcache, True)
             torch.cuda.synchronize()
             toc = time.time()
             decode_time.append(toc - tic)
@@ -100,37 +96,36 @@ def bench(layer: CustomLlamaDecoderLayer,
 
 
 if __name__ == "__main__":
-    device = "cuda:7"
+    device = torch.device("cuda", 7)
     torch.cuda.set_device(device)
 
-    # decode_step = 200
+    decode_step = 3200
 
     # model_path = "/nfs/shared_LLM_model/lmsys/longchat-7b-v1.5-32k"
     # model_path = "/nfs/shared_LLM_model/meta-llama/Meta-Llama-3.1-8B-Instruct"
     # model_path = "/root/data/longchat-7b-v1.5-32k"
-    # model_path = "/root/data/meta-llama/Meta-Llama-3.1-8B-Instruct/"
-    model_path = "/root/data/togethercomputer/LLaMA-2-7B-32K/"
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    model_path = "/root/data/glm-4-9b-chat"
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
 
-    config = AutoConfig.from_pretrained(model_path)
+    config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
     config.num_hidden_layers = 1
     config.torch_dtype = torch.float16
     config._attn_implementation = "flash_attention_2"
 
-    layer = CustomLlamaDecoderLayer(config,
-                                    0).eval().to(torch.float16).to(device)
-    
+    layer = CustomGLMBlock(config, 0).eval().to(torch.float16).to(device)
+    kvcache = SparQStaticCache(
+        config=config,
+        r_channel=32,
+        device=device,
+        max_gpu_cache_memory_size=8 * 1024 * 1024 * 1024,
+        sparse_ratio=512,
+        num_skip_layers=0,
+    )
+    kvcache.build_cache()
 
-    for batch_size in [4]:
+    for batch_size in [32]:
         print(f"batch_size: {batch_size}")
-        for prefill_len in [64000]:
-            kvcache = SparQStaticCache(
-                config=config,
-                r_channel=32,
-                device=device,
-                max_gpu_cache_memory_size=12 * 1024 * 1024 * 1024,
-                sparse_ratio=prefill_len * 0.016,
-                num_skip_layers=0,
-            )
-            kvcache.build_cache()
-            bench(layer, kvcache, batch_size, prefill_len, prefill_len // 10, device)
+        # for prefill_len in [128000]:
+        for prefill_len in [8000]:
+        # for prefill_len in [32000]:
+            bench(layer, kvcache, batch_size, prefill_len, prefill_len // 40, device)

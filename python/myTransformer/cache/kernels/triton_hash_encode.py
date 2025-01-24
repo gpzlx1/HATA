@@ -599,7 +599,7 @@ def decode_hash_encode(key_data: torch.Tensor, hash_weights: torch.Tensor,
             num_stages=1,
         )
 
-
+# @triton.autotune(configs=configs, key=["HEAD_DIM", "RBIT"])
 @triton.jit
 def _decode_multi_hash_encode(
     key_data_ptr,

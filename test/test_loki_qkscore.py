@@ -45,10 +45,10 @@ def torch_loki_qk_score(query, key, seq_len, partial_dim):
 torch_out = torch_loki_qk_score(query, key, seq_len, partial_dim)
 triton_out = loki_qk_score(query, key, seq_len, partial_dim)
 
-print(torch_out)
-print(torch_out.shape)
-print(triton_out)
-print(triton_out.shape)
+# print(torch_out)
+# print(torch_out.shape)
+# print(triton_out)
+# print(triton_out.shape)
 
 print((torch_out - triton_out).abs().max())
 torch.cuda.synchronize()

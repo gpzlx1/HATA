@@ -17,7 +17,7 @@ try:
 except:
     pass
 
-from ..utils import SiLUAndMul
+from ..utils import SiLUAndMul, custom_apply_llama31_rope, custom_apply_rope
 import flashinfer
 from transformers.modeling_flash_attention_utils import _flash_attention_forward
 from ...cache.kvcache_loki import LokiStaticCache, prepare_cache_for_generation
@@ -124,7 +124,7 @@ class CustomRotaryEmbedding(nn.Module):
             self.fn_kwargs['interleave'] = True
             self.fn_kwargs['rope_scale'] = config.rope_scaling["factor"]
             self.fn_kwargs['rope_theta'] = config.rope_theta
-            self.fn = flashinfer.apply_rope
+            self.fn = custom_apply_rope
 
         elif self.rope_type == "llama3":
             self.fn_kwargs['interleave'] = False
@@ -136,13 +136,13 @@ class CustomRotaryEmbedding(nn.Module):
             self.fn_kwargs['rope_scale'] = config.rope_scaling['factor']
             self.fn_kwargs['old_context_len'] = config.rope_scaling[
                 'original_max_position_embeddings']
-            self.fn = flashinfer.apply_llama31_rope
+            self.fn = custom_apply_llama31_rope
 
         elif self.rope_type == "default":
             self.fn_kwargs['interleave'] = True
             self.fn_kwargs['rope_scale'] = 1
             self.fn_kwargs['rope_theta'] = 10000.0 * config.rope_ratio
-            self.fn = flashinfer.apply_rope
+            self.fn = custom_apply_rope
 
         self.rope_dim = int(config.kv_channels * 0.5)
 

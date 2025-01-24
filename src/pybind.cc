@@ -44,6 +44,7 @@ PYBIND11_MODULE(KVLib, m) {
         py::arg("use_key_norm") = false)
       .def("batch_topk", &kvlib::TopkCUDA)
       .def("decode_hash_encode", &kvlib::decode_hash_encode)
+      .def("decode_multi_hash_encode", &kvlib::decode_multi_hash_encode)
       .def("flash_index_decode", &kvlib::mha_index_decode_fwd)
       .def("flash_decode", &kvlib::mha_decode_fwd)
       .def("combine_attention", &kvlib::combine_attention)

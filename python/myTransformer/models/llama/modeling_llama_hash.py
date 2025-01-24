@@ -19,6 +19,8 @@ import flashinfer
 from transformers.modeling_flash_attention_utils import _flash_attention_forward
 import KVLib
 import math
+from flashinfer import _kernels
+from ..utils import custom_apply_llama31_rope, custom_apply_rope
 
 logger = logging.get_logger(__name__)
 
@@ -77,7 +79,7 @@ class CustomLlamaRotaryEmbedding(nn.Module):
             self.fn_kwargs['interleave'] = False
             self.fn_kwargs['rope_scale'] = config.rope_scaling["factor"]
             self.fn_kwargs['rope_theta'] = config.rope_theta
-            self.fn = flashinfer.apply_rope
+            self.fn = custom_apply_rope
 
         elif self.rope_type == "llama3":
             self.fn_kwargs['interleave'] = False
@@ -89,19 +91,18 @@ class CustomLlamaRotaryEmbedding(nn.Module):
             self.fn_kwargs['rope_scale'] = config.rope_scaling['factor']
             self.fn_kwargs['old_context_len'] = config.rope_scaling[
                 'original_max_position_embeddings']
-            self.fn = flashinfer.apply_llama31_rope
+            self.fn = custom_apply_llama31_rope
 
         elif self.rope_type == "default":
             self.fn_kwargs['interleave'] = False
             self.fn_kwargs['rope_scale'] = 1
             self.fn_kwargs['rope_theta'] = config.rope_theta
-            self.fn = flashinfer.apply_rope
+            self.fn = custom_apply_rope
 
     def forward(self, query_states, key_states, past_key_values):
         indptr, offsets = past_key_values.get_rope_metadata(
             query_states.device)
-        fl_q, fl_k = self.fn(query_states, key_states, indptr, offsets,
-                             **self.fn_kwargs)
+        fl_q, fl_k = self.fn(query_states, key_states, indptr, offsets, **self.fn_kwargs)
         return fl_q, fl_k
 
 
@@ -164,7 +165,7 @@ class CustomLlamaAttention(LlamaFlashAttention2):
                                           self.layer_idx)
 
             if self.layer_idx >= past_key_value.get_num_skip_layers():
-                past_key_value.prefill_encode_hash(self.layer_idx)
+                past_key_value.prefill_encode_hash(self.layer_idx, key_states)
 
             attn_output = _flash_attention_forward(
                 query_states,

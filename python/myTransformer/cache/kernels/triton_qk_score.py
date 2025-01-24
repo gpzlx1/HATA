@@ -199,7 +199,7 @@ def loki_qk_score(query, key, seq_len, partial_dim):
             NUM_HEADS,
             triton.cdiv(seq_len, args["BLOCK_M"]),
         )
-        BLOCK_M = 128
+        BLOCK_M = 32
 
         SCALE = math.sqrt(HEAD_DIM)
 
@@ -315,7 +315,7 @@ def sparq_qk_score(query, key, seq_len, channel_index):
             NUM_KV_HEADS,
             triton.cdiv(seq_len, args["BLOCK_M"]),
         )
-        BLOCK_M = 128
+        BLOCK_M = 32
 
         _sparq_gqa_qk_score[grid](
             query,

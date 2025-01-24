@@ -209,10 +209,10 @@ class HashStaticCache(CustomStaticCache):
         if layer_idx == self.num_layers - 1:
             self.seq_len += 1
 
-    def prefill_encode_hash(self, layer_idx):
+    def prefill_encode_hash(self, layer_idx, key):
         assert layer_idx >= self.num_skip_layers, f"hash topk is not enabled in layer{layer_idx}!"
-        key = self.layer_caches[layer_idx][
-            0, :, :self.layer_cache_lens[layer_idx], :, :]
+        # key = self.layer_caches[layer_idx][
+        #     0, :, :self.layer_cache_lens[layer_idx], :, :]
         prefill_hash_encode(
             key, self.hash_weights[layer_idx],
             self.layer_hash_caches[layer_idx],
@@ -225,8 +225,8 @@ class HashStaticCache(CustomStaticCache):
         key = self.layer_caches[layer_idx][0, :,
                                            self.seq_len:self.seq_len + 1, :, :]
 
-        # KVLib.decode_hash_encode(
-        decode_hash_encode(
+        KVLib.decode_hash_encode(
+        # decode_hash_encode(
             key, self.hash_weights[layer_idx],
             self.layer_hash_caches[layer_idx],
             self.layer_norm_caches[layer_idx], query,
@@ -261,9 +261,9 @@ class HashStaticCache(CustomStaticCache):
             fetch_num = int(seq_len * self.sparse_ratio)
         else:
             fetch_num = min(int(self.sparse_ratio), self.seq_len)
-        topk_indices = torch.topk(score, fetch_num, dim=-1,
-                                  largest=largest).indices.int()
-        # topk_indices = KVLib.batch_topk(score, fetch_num, largest)
+        # topk_indices = torch.topk(score, fetch_num, dim=-1,
+        #                           largest=largest).indices.int()
+        topk_indices = KVLib.batch_topk(score, fetch_num, largest)
 
         torch.cuda.nvtx.range_pop()
 

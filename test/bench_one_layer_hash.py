@@ -18,7 +18,7 @@ def bench(layer: CustomLlamaDecoderLayer,
           dtype=torch.float16):
 
     warmup = 3
-    bench_epoch = 10
+    bench_epoch = 5
     hidden_size = layer.self_attn.hidden_size
 
     prefill_position_ids = torch.arange(0, prefill_len,
@@ -100,13 +100,14 @@ def bench(layer: CustomLlamaDecoderLayer,
 
 
 if __name__ == "__main__":
-    device = torch.device("cuda", 7)
+    device = torch.device("cuda", 6)
     torch.cuda.set_device(device)
 
-    decode_step = 200
+    # decode_step = 200
 
     # model_path = "/nfs/shared_LLM_model/lmsys/longchat-7b-v1.5-32k"
-    model_path = "/nfs/shared_LLM_model/meta-llama/Meta-Llama-3.1-8B-Instruct"
+    # model_path = "/root/data/meta-llama/Meta-Llama-3.1-8B-Instruct/"
+    model_path = "/root/data/togethercomputer/LLaMA-2-7B-32K/"
     tokenizer = AutoTokenizer.from_pretrained(model_path)
 
     config = AutoConfig.from_pretrained(model_path)
@@ -116,20 +117,22 @@ if __name__ == "__main__":
 
     layer = CustomLlamaDecoderLayer(config,
                                     0).eval().to(torch.float16).to(device)
-    kvcache = HashStaticCache(config=config,
+    
+    
+
+    for batch_size in [1, 2, 3, 4]:
+        print(f"batch_size: {batch_size}")
+        for prefill_len in [64000]:
+            kvcache = HashStaticCache(config=config,
                               hash_rbits=128,
                               device=device,
-                              max_gpu_cache_memory_size=30 * 1024 * 1024 *
+                              max_gpu_cache_memory_size=16 * 1024 * 1024 *
                               1024,
-                              sparse_ratio=512,
+                              sparse_ratio=prefill_len * 0.016,
                               num_skip_layers=0,
                               hash_weights_path=None,
                               use_norm=True,
-                              num_sink=64,
-                              num_recent=32)
-    kvcache.build_cache()
-
-    for batch_size in [1]:
-        print(f"batch_size: {batch_size}")
-        for prefill_len in [16000]:
-            bench(layer, kvcache, batch_size, prefill_len, decode_step, device)
+                              num_sink=0,
+                              num_recent=0)
+            kvcache.build_cache()
+            bench(layer, kvcache, batch_size, prefill_len, prefill_len // 10, device)

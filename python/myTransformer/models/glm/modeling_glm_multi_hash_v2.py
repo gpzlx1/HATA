@@ -236,7 +236,7 @@ class CustomSelfAttention(SelfAttention):
                                           self.layer_idx)
 
             if self.layer_idx >= past_key_value.get_num_skip_layers():
-                past_key_value.prefill_encode_hash(self.layer_idx)
+                past_key_value.prefill_encode_hash(self.layer_idx, key_states)
 
             attn_output = _flash_attention_forward(
                 query_states,

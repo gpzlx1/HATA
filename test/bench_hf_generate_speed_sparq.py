@@ -18,16 +18,10 @@ def bench_prefill_decode_speed(model, tokenizer, prefill_len, batch_size):
     input_text = "A " * prefill_len
 
     generation_kwargs = {
-        "max_gpu_cache_memory": 20 * 1024 * 1024 * 1024,  # 30GB
-        # "page_num": 1000,
-        # "page_size": 16,
-        "hash_rbits": 128,
-        "hash_weights_path":
-        None,
-        # "/root/workspace/myoffloading/model_weights/Meta-Llama-3.1-8B-Instruct-128",
+        "max_gpu_cache_memory":
+        20 * 1024 * 1024 * 1024,
+        "r_channel": 32,
         "sparse_ratio": 1024,
-        "with_bias": False,
-        "use_norm": True,
         "num_sink": 0,
         "num_recent": 0,
     }
@@ -76,7 +70,8 @@ def bench_prefill_decode_speed(model, tokenizer, prefill_len, batch_size):
     decode_time_cost = (time.time() - decode_time_start) * 1000 / decode_bench
     decode_time_cost = decode_time_cost - prefill_time_cost
     print(
-        f"decode time cost [{prompt.shape}, {decode_step}]: {decode_time_cost / (decode_step - 1)} ms"
+        # f"decode time cost [{prompt.shape}, {decode_step}]: {decode_time_cost / (decode_step - 1)} ms"
+        f"decode time cost [{prompt.shape}, {decode_step}]: {decode_time_cost} ms"
     )
 
 
@@ -97,7 +92,7 @@ if __name__ == "__main__":
     config.torch_dtype = torch.float16
 
     print(config)
-    from myTransformer.models.llama.modeling_llama_hash import CustomLlamaForCausalLM
+    from myTransformer.models.llama.modeling_llama_sparq import CustomLlamaForCausalLM
     model = CustomLlamaForCausalLM.from_pretrained(model_path,
                                                    torch_dtype=torch.float16,
                                                    config=config)
