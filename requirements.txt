@@ -6,3 +6,8 @@ pybind11
 protobuf
 sentencepiece
 fastchat
+fuzzywuzzy
+rouge
+jieba
+ninja
+tiktoken
