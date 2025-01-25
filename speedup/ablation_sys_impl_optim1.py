@@ -12,12 +12,12 @@ def set_args(parser: argparse.ArgumentParser):
     parser.add_argument("--num_heads", type=int, default=32)
     parser.add_argument("--num_kv_heads", type=int, default=32)
     parser.add_argument("--rbit", type=int, default=128)
-    parser.add_argument("--seqlens", type=str, default="32000,64000,96000")
+    parser.add_argument("--seqlens", type=str, default="96000,128000")
     parser.add_argument("--num_decode_steps", type=int, default=200)
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--device", type=int, default=0)
-    parser.add_argument("--sparse_budget", type=int, default=512)
+    parser.add_argument("--sparse_budget", type=float, default=0.016)
 
 
 def torch_decode_hash_encode(key: torch.Tensor, hash_weight: torch.Tensor,
@@ -119,12 +119,14 @@ if __name__ == "__main__":
                                                           args.rbit,
                                                           curr_seq_len,
                                                           use_key_norm=True)
+            sparse_budget = int(
+                args.sparse_budget) if args.sparse_budget >= 1 else int(
+                    curr_seq_len * args.sparse_budget)
             topk_index = myTransformer.capi.batch_topk(hash_score,
-                                                       args.sparse_budget,
-                                                       True)
+                                                       sparse_budget, True)
             # ===================== gather & attention =======================
             topk_index = topk_index.transpose(-1, -2).unsqueeze(-1).expand(
-                args.batch_size, args.sparse_budget, args.num_kv_heads,
+                args.batch_size, sparse_budget, args.num_kv_heads,
                 args.head_dim).to(torch.int64)
             sparse_key = torch.gather(key_cache, dim=1, index=topk_index)
             sparse_value = torch.gather(value_cache, dim=1, index=topk_index)
