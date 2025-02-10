@@ -38,21 +38,21 @@ dataset = Dataset.from_list(dataset)
 
 if __name__ == "__main__":
     # i = int(sys.argv[1])
-    device = "cuda:7"
+    device = "cuda:0"
     torch.cuda.set_device(device)
     torch.manual_seed(42)
 
     # model_path = "/nfs/shared_LLM_model/meta-llama/Llama-2-7b-chat-hf"
     # model_path = "/nfs/shared_LLM_model/lmsys/longchat-7b-v1.5-32k"
     # model_path = "/nfs/shared_LLM_model/meta-llama/Meta-Llama-3.1-8B-Instruct"
-    model_path = "/nfs/shared_LLM_model/THUDM/glm-4-9b-chat"
-    # model_path = "/nfs/shared_LLM_model/Qwen/Qwen2.5-7B-Instruct"
+    # model_path = "/nfs/shared_LLM_model/THUDM/glm-4-9b-chat"
+    model_path = "/nfs/shared_LLM_model/Qwen/Qwen2.5-14B-Instruct-1M"
     tokenizer = AutoTokenizer.from_pretrained(model_path,
                                               trust_remote_code=True)
 
-    from myTransformer.models.llama.modeling_llama_hash import CustomLlamaForCausalLM
-    from myTransformer.models.glm.modeling_glm_hash_v2 import CustomGlmForCausalLM
-    from myTransformer.models.qwen2.modeling_qwen2_fa import CustomQwen2ForCausalLM
+    from myTransformer.models.llama.modeling_llama_multi_hash import CustomLlamaForCausalLM
+    from myTransformer.models.glm.modeling_glm_multi_hash_v2 import CustomGlmForCausalLM
+    from myTransformer.models.qwen2.modeling_qwen2_multi_hash import CustomQwen2ForCausalLM
 
     config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
     config.torch_dtype = torch.float16
@@ -75,18 +75,17 @@ if __name__ == "__main__":
     model = model.eval().to(device)
 
     generation_kwargs = {
-        "max_gpu_cache_memory": 22212254720,  # 30GB
+        "max_gpu_cache_memory": 10 * 1024 * 1024 * 1024,  # 30GB
         "page_num": 1000,
         "page_size": 16,
         "hash_rbits": 128,
         "hash_weights_path":
-        # "/root/workspace/myoffloading/model_weights/longchat-7b-v1.5-32k-128",
-        # "/root/workspace/myoffloading/model_weights/Meta-Llama-3.1-8B-Instruct-128",
+        # "/root/workspace/myoffloading/model_weights_v5/Meta-Llama-3.1-8B-Instruct-128",
         None,
         "sparse_ratio": 512,
-        "use_norm": True,
-        "num_sink": 64,
-        "num_recent": 32,
+        "use_norm": False,
+        "num_sink": 0,
+        "num_recent": 0,
     }
     generation_config = GenerationConfig(**generation_kwargs)
 
