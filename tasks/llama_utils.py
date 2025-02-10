@@ -192,7 +192,7 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
                 config=model_config,
                 trust_remote_code=True)
         elif model_arch == "qwen2":
-            from myTransformer.models.qwen2.modeling_qwen2_hash import CustomQwen2ForCausalLM
+            from myTransformer.models.qwen2.modeling_qwen2_multi_hash import CustomQwen2ForCausalLM
             model = CustomQwen2ForCausalLM.from_pretrained(model_name_or_path,
                                                            config=model_config)
         else:

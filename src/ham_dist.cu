@@ -10,6 +10,9 @@
     if ((val) == 32) {                        \
       constexpr int NumHead = 32;             \
       { __VA_ARGS__ }                         \
+    } else if ((val) == 40) {                 \
+      constexpr int NumHead = 40;             \
+      { __VA_ARGS__ }                         \
     } else if ((val) == 28) {                 \
       constexpr int NumHead = 28;             \
       { __VA_ARGS__ }                         \
@@ -31,16 +34,24 @@
   do {                                          \
     if ((val) == 32) {                          \
       constexpr int NumKVHead = 32;             \
-      { __VA_ARGS__ }                           \
+      {                                         \
+        __VA_ARGS__                             \
+      }                                         \
     } else if ((val) == 8) {                    \
       constexpr int NumKVHead = 8;              \
-      { __VA_ARGS__ }                           \
+      {                                         \
+        __VA_ARGS__                             \
+      }                                         \
     } else if ((val) == 4) {                    \
       constexpr int NumKVHead = 4;              \
-      { __VA_ARGS__ }                           \
+      {                                         \
+        __VA_ARGS__                             \
+      }                                         \
     } else if ((val) == 2) {                    \
       constexpr int NumKVHead = 2;              \
-      { __VA_ARGS__ }                           \
+      {                                         \
+        __VA_ARGS__                             \
+      }                                         \
     } else {                                    \
       LOG(FATAL) << "NumKVHead is not support"; \
     }                                           \
