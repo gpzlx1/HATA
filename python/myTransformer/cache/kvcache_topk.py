@@ -3,22 +3,22 @@ import torch
 from transformers.configuration_utils import PretrainedConfig
 from transformers.generation.configuration_utils import GenerationConfig
 from .kvcache_fa import CustomStaticCache
-from .kernels.triton_qk_score import topk_qk_score
+from .kernels.triton_qk_score import qk_score
 import KVLib
 import os
+import math
 
+# def qk_score(query, key, seq_len):
+#     b, _, hk, d = key.shape
+#     h = query.shape[-2]
+#     gqa = h // hk
 
-def qk_score(query, key, seq_len):
-    b, _, hk, d = key.shape
-    h = query.shape[-2]
-    gqa = h // hk
-
-    query = query.transpose(1, 2).transpose(-1, -2)
-    key = key[:, :seq_len, :, :].transpose(1, 2).unsqueeze(2).expand(
-        -1, -1, gqa, -1, -1).reshape(b, h, seq_len, d)
-    score = key @ query
-    score = score.view(b, hk, gqa, -1).sum(2)
-    return score
+#     query = query.transpose(1, 2).transpose(-1, -2)
+#     key = key[:, :seq_len, :, :].transpose(1, 2).unsqueeze(2).expand(
+#         -1, -1, gqa, -1, -1).reshape(b, h, seq_len, d)
+#     score = key @ query
+#     score = score.view(b, hk, gqa, -1).sum(2)
+#     return score
 
 
 class TopkStaticCache(CustomStaticCache):
@@ -42,12 +42,23 @@ class TopkStaticCache(CustomStaticCache):
         self.num_skip_layers = num_skip_layers
         self.num_sink = num_sink
         self.num_recent = num_recent
+        self.gqa_size = self.num_heads // self.num_key_value_heads
 
-    def compute_topk(self, query: torch.Tensor, layer_idx: int):
+    def compute_topk(self,
+                     query: torch.Tensor,
+                     layer_idx: int,
+                     gqa_reduce=True,
+                     return_score=False):
         assert layer_idx >= self.num_skip_layers, f"topk is not enabled in layer{layer_idx}!"
         torch.cuda.nvtx.range_push("topk score")
-        score = topk_qk_score(query, self.layer_caches[layer_idx][0],
-                              self.seq_len)
+        kvcache_len = self.seq_len + 1 if layer_idx != self.num_layers - 1 else self.seq_len
+        score = qk_score(query, self.layer_caches[layer_idx][0],
+                         kvcache_len).to(torch.float32) / math.sqrt(
+                             self.head_dim)
+        score = torch.softmax(score, dim=-1).to(query.dtype)
+        if gqa_reduce:
+            score = score.view(self.curr_batch_size, self.num_key_value_heads,
+                               self.gqa_size, -1).sum(2)
         if self.num_sink > 0:
             score[:, :, :self.num_sink] = torch.finfo(score.dtype).max
         if self.num_recent > 0:
@@ -56,15 +67,18 @@ class TopkStaticCache(CustomStaticCache):
 
         torch.cuda.nvtx.range_push("compute topk")
         if self.sparse_ratio < 1:
-            fetch_num = int(self.seq_len * self.sparse_ratio)
+            fetch_num = int(kvcache_len * self.sparse_ratio)
         else:
-            fetch_num = min(int(self.sparse_ratio), self.seq_len)
+            fetch_num = min(int(self.sparse_ratio), kvcache_len)
         # topk_indices = KVLib.batch_topk(score, fetch_num, True)
         topk_indices = torch.topk(score, fetch_num, dim=-1,
                                   largest=True).indices.int()
         torch.cuda.nvtx.range_pop()
 
-        return topk_indices
+        if return_score:
+            return topk_indices, score
+        else:
+            return topk_indices
 
     def get_num_skip_layers(self):
         return self.num_skip_layers
