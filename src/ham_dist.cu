@@ -71,6 +71,9 @@
     } else if ((val) == 2) {                   \
       constexpr int NumChunk = 2;              \
       { __VA_ARGS__ }                          \
+    } else if ((val) == 1) {                   \
+      constexpr int NumChunk = 1;              \
+      { __VA_ARGS__ }                          \
     } else {                                   \
       LOG(FATAL) << "NumChunk is not support"; \
     }                                          \
@@ -220,7 +223,7 @@ torch::Tensor HammingScoreCUDA(torch::Tensor& key_codes,
 
         if (NumChunk % 2 == 0) {
           // convert int32 to int64
-          constexpr int32_t HalfNumChunk = NumChunk / 2;
+          constexpr int32_t HalfNumChunk = NumChunk / 2 < 1 ? 1 : NumChunk / 2;
           constexpr int32_t NumTokens = NumThreads / (NumKVHead * HalfNumChunk);
           constexpr int32_t ELEMS_PER_BLOCK =
               NumKVHead * HalfNumChunk * NumTokens;
