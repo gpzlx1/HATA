@@ -54,6 +54,15 @@ def qwen2_apply_chat_template(prompt, tokenizer):
     return encoded
 
 
+def deepseek_apply_chat_template(prompt, tokenizer):
+    messages = [{"role": "user", "content": f"{prompt}"}]
+    prompt = tokenizer.apply_chat_template(messages,
+                                           add_generation_prompt=True,
+                                           tokenize=False)
+    encoded = tokenizer(prompt)
+    return encoded
+
+
 def get_model_type_arch(model_name_or_path):
     if any([
             x in model_name_or_path.lower()
@@ -78,21 +87,27 @@ def get_model_type_arch(model_name_or_path):
     elif any([x in model_name_or_path.lower() for x in ["qwen2", "qwen2.5"]]):
         print("run qwen2 model")
         return "qwen2", "qwen2"
+    elif any(
+        [x in model_name_or_path.lower()
+         for x in ["deepseek", "deepseek-v2"]]):
+        print("run deepseek model")
+        return "deepseek", "deepseek"
     else:
         raise ValueError("Unsupported model name")
 
 
 def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
+    dtype = torch.float16
     model_config = AutoConfig.from_pretrained(model_name_or_path,
                                               trust_remote_code=True)
-    model_config.torch_dtype = torch.float16
+    model_config.torch_dtype = dtype
     generate_kwarg = {}
 
     method = args.method.lower()
 
     model_type, model_arch = get_model_type_arch(model_name_or_path)
 
-    if model_arch == "glm":
+    if model_arch in ["glm", "deepseek"]:
         tokenizer = AutoTokenizer.from_pretrained(model_name_or_path,
                                                   trust_remote_code=True)
     else:
@@ -126,6 +141,11 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
 
     elif model_type == "qwen2":
         apply_chat_template = qwen2_apply_chat_template
+
+    elif model_type == "deepseek":
+        apply_chat_template = deepseek_apply_chat_template
+        tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.pad_token_id = tokenizer.eos_token_id
 
     else:
         raise ValueError("Unsupported model name")
@@ -161,6 +181,24 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
                 trust_remote_code=True)
         elif model_arch == "qwen2":
             from myTransformer.models.qwen2.modeling_qwen2_fa import CustomQwen2ForCausalLM
+            model = CustomQwen2ForCausalLM.from_pretrained(model_name_or_path,
+                                                           config=model_config)
+        elif model_arch == "deepseek":
+            from myTransformer.models.deepseek.modeling_deepseek_fa import CustomDeepseekV2ForCausalLM
+            model = CustomDeepseekV2ForCausalLM.from_pretrained(
+                model_name_or_path, config=model_config)
+        else:
+            raise NotImplementedError(
+                f"{method} not implemented for {model_arch} models!")
+
+    elif method == "streamingllm":
+        generate_config = {
+            "max_gpu_cache_memory":
+            float(os.environ["CUDA_MEM"]) * 1024 * 1024 * 1024,  # 30GB
+        }
+        model_config._attn_implementation = "flash_attention_2"
+        if model_arch == "qwen2":
+            from myTransformer.models.qwen2.modeling_qwen2_streamingllm import CustomQwen2ForCausalLM
             model = CustomQwen2ForCausalLM.from_pretrained(model_name_or_path,
                                                            config=model_config)
         else:
@@ -308,8 +346,11 @@ def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
     # unset to avoid some warning
     model.generation_config.temperature = None
     model.generation_config.top_p = None
-    model.generation_config.pad_token_id = tokenizer.pad_token_id
-    model = model.to(torch.float16).eval()
+    if model_arch == "deepseek":
+        model.generation_config.pad_token_id = model.generation_config.eos_token_id
+    else:
+        model.generation_config.pad_token_id = tokenizer.pad_token_id
+    model = model.to(dtype).eval()
 
     for key, value in generate_config.items():
         setattr(model.generation_config, key, value)

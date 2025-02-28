@@ -21,7 +21,10 @@ class CustomStaticCache(Cache):
         self.max_gpu_cache_memory_size = max_gpu_cache_memory_size
         self.dtype = config.torch_dtype
         self.num_layers = config.num_hidden_layers
-        if hasattr(config, "head_dim"):
+
+        if hasattr(config, "qk_nope_head_dim"):
+            self.head_dim = config.qk_nope_head_dim + config.qk_rope_head_dim
+        elif hasattr(config, "head_dim"):
             self.head_dim = config.head_dim
         elif hasattr(config, "kv_channels"):
             self.head_dim = config.kv_channels
@@ -137,9 +140,8 @@ class CustomStaticCache(Cache):
                                                     self.head_dim *
                                                     self.curr_batch_size * 2)
         self.max_seq_len = max_seq_len
-
+        # print(max_seq_len)
         numel = 2 * batch_size * max_seq_len * self.num_key_value_heads * self.head_dim
-        # print(self.max_seq_len)
         for i in range(self.num_layers):
             self.layer_caches[i] = self.max_layer_caches[i][:numel]
             self.layer_caches[i] = self.layer_caches[i].view(
