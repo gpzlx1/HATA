@@ -9,8 +9,8 @@ from .modeling_deepseek import (
     DeepseekV2RMSNorm,
     DeepseekV2DecoderLayer,
     DeepseekV2FlashAttention2,
-    apply_rotary_pos_emb,
     AddAuxiliaryLoss,
+    rotate_half,
 )
 
 import math
@@ -35,7 +35,7 @@ from transformers.utils.import_utils import is_torch_fx_available
 from .configuration_deepseek import DeepseekV2Config
 
 import flashinfer
-from ...cache.kvcache_fa import CustomStaticCache, prepare_cache_for_generation
+from ...cache.kvcache_mla import CustomStaticCache, prepare_cache_for_generation
 from ..utils import SiLUAndMul
 import torch.distributed as dist
 import numpy as np
@@ -83,14 +83,19 @@ class CustomDeepseekV2MLP(DeepseekV2MLP):
                                           bias=False,
                                           dtype=self.torch_dtype,
                                           device=device)
+
             self.gate_up_proj.weight.data[:self.
                                           intermediate_size, :] = self.gate_proj.weight.data
+            del self.gate_proj
+
             self.gate_up_proj.weight.data[
-                self.intermediate_size:, :] = self.up_proj.weight.data
+                self.intermediate_size:, :] = self.up_proj.weight.data.to(
+                    device)
+            del self.up_proj
+
             self.act_fn = SiLUAndMul()
 
-            del self.gate_proj
-            del self.up_proj
+            torch.cuda.empty_cache()
 
     def forward(self, x):
         self.convert_fusion_exec()
@@ -98,6 +103,11 @@ class CustomDeepseekV2MLP(DeepseekV2MLP):
         x = self.act_fn(x)
         x = self.down_proj(x)
         return x
+
+    # def forward(self, x):
+    #     down_proj = self.down_proj(
+    #         self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+    #     return down_proj
 
 
 class CustomDeepseekV2MoE(DeepseekV2MoE):
@@ -157,72 +167,48 @@ class CustomDeepseekV2MoE(DeepseekV2MoE):
         return y
 
     @torch.no_grad()
-    def moe_infer(self, x, topk_ids, topk_weight):
+    def moe_infer(self, x: torch.Tensor, topk_ids: torch.Tensor,
+                  topk_weight: torch.Tensor):
         cnts = topk_ids.new_zeros((topk_ids.shape[0], len(self.experts)))
-        cnts.scatter_(1, topk_ids, 1)
-        tokens_per_expert = cnts.sum(dim=0)
+        cnts.scatter_(1, topk_ids, 1)  # (#tokens, #experts)
+        tokens_per_expert = cnts.sum(dim=0)  # (#experts)
         idxs = topk_ids.view(-1).argsort()
-        sorted_tokens = x[idxs // topk_ids.shape[1]]
-        sorted_tokens_shape = sorted_tokens.shape
-        if self.ep_size > 1:
-            tokens_per_ep_rank = tokens_per_expert.view(self.ep_size,
-                                                        -1).sum(dim=1)
-            tokens_per_expert_group = tokens_per_expert.new_empty(
-                tokens_per_expert.shape[0])
-            dist.all_to_all_single(tokens_per_expert_group, tokens_per_expert)
-            output_splits = (tokens_per_expert_group.view(
-                self.ep_size, -1).sum(1).cpu().numpy().tolist())
-            gathered_tokens = sorted_tokens.new_empty(
-                tokens_per_expert_group.sum(dim=0).cpu().item(),
-                sorted_tokens.shape[1])
-            input_split_sizes = tokens_per_ep_rank.cpu().numpy().tolist()
-            dist.all_to_all(
-                list(gathered_tokens.split(output_splits)),
-                list(sorted_tokens.split(input_split_sizes)),
-            )
-            tokens_per_expert_post_gather = tokens_per_expert_group.view(
-                self.ep_size, self.experts_per_rank).sum(dim=0)
-            gatherd_idxs = np.zeros(shape=(gathered_tokens.shape[0], ),
-                                    dtype=np.int32)
-            s = 0
-            for i, k in enumerate(tokens_per_expert_group.cpu().numpy()):
-                gatherd_idxs[s:s + k] = i % self.experts_per_rank
-                s += k
-            gatherd_idxs = gatherd_idxs.argsort()
-            sorted_tokens = gathered_tokens[gatherd_idxs]
-            tokens_per_expert = tokens_per_expert_post_gather
-        tokens_per_expert = tokens_per_expert.cpu().numpy()
 
-        outputs = []
+        tokens_per_expert = tokens_per_expert.cpu().numpy()
+        outs = torch.empty((idxs.shape[0], x.shape[1]),
+                           dtype=x.dtype,
+                           device=x.device)
+
         start_idx = 0
         for i, num_tokens in enumerate(tokens_per_expert):
             end_idx = start_idx + num_tokens
             if num_tokens == 0:
                 continue
             expert = self.experts[i + self.ep_rank * self.experts_per_rank]
-            tokens_for_this_expert = sorted_tokens[start_idx:end_idx]
-            expert_out = expert(tokens_for_this_expert)
-            outputs.append(expert_out)
+            outs[idxs[start_idx:end_idx]] = expert(x[idxs[start_idx:end_idx] //
+                                                     topk_ids.shape[1]])
             start_idx = end_idx
 
-        outs = torch.cat(outputs,
-                         dim=0) if len(outputs) else sorted_tokens.new_empty(0)
-        if self.ep_size > 1:
-            new_x = torch.empty_like(outs)
-            new_x[gatherd_idxs] = outs
-            gathered_tokens = new_x.new_empty(*sorted_tokens_shape)
-            dist.all_to_all(
-                list(gathered_tokens.split(input_split_sizes)),
-                list(new_x.split(output_splits)),
-            )
-            outs = gathered_tokens
-
-        new_x = torch.empty_like(outs)
-        new_x[idxs] = outs
-        final_out = (new_x.view(
+        final_out = (outs.view(
             *topk_ids.shape, -1).type(topk_weight.dtype).mul_(
-                topk_weight.unsqueeze(dim=-1)).sum(dim=1).type(new_x.dtype))
+                topk_weight.unsqueeze(dim=-1)).sum(dim=1).type(outs.dtype))
         return final_out
+
+
+def apply_rotary_pos_emb(q, k, cos, sin, position_ids):
+    b, s, h, d = q.shape
+    b, s, hkv, d = k.shape
+    # cos/sin: (seqlen, rope_dim)
+
+    cos = cos[position_ids].view(1, s, 1, d)
+    sin = sin[position_ids].view(1, s, 1, d)
+
+    q = q.view(b, s, h, d // 2, 2).transpose(4, 3).reshape(b, s, h, d)
+    k = k.view(b, s, hkv, d // 2, 2).transpose(4, 3).reshape(b, s, hkv, d)
+
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin)
+    return q_embed, k_embed
 
 
 # Copied from transformers.models.llama.modeling_llama.LlamaFlashAttention2 with Llama->DeepseekV2
@@ -242,7 +228,6 @@ class CustomDeepseekV2Attention(DeepseekV2FlashAttention2):
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor],
                Optional[Tuple[torch.Tensor]]]:
-        # DeepseekV2FlashAttention2 attention does not support output_attentions
         if "padding_mask" in kwargs:
             warnings.warn(
                 "Passing `padding_mask` is deprecated and will be removed in v4.37. Please make sure use `attention_mask` instead.`"
@@ -259,82 +244,51 @@ class CustomDeepseekV2Attention(DeepseekV2FlashAttention2):
             q = self.q_proj(hidden_states)
         else:
             q = self.q_b_proj(self.q_a_layernorm(self.q_a_proj(hidden_states)))
-        q = q.view(bsz, q_len, self.num_heads, self.q_head_dim).transpose(1, 2)
+        q = q.view(bsz, q_len, self.num_heads, self.q_head_dim)
         q_nope, q_pe = torch.split(
             q, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
 
         compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
         compressed_kv, k_pe = torch.split(
             compressed_kv, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
-        k_pe = k_pe.view(bsz, q_len, 1, self.qk_rope_head_dim).transpose(1, 2)
-        kv = (self.kv_b_proj(self.kv_a_layernorm(compressed_kv)).view(
-            bsz, q_len, self.num_heads,
-            self.qk_nope_head_dim + self.v_head_dim).transpose(1, 2))
 
-        k_nope, value_states = torch.split(
-            kv, [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
-        kv_seq_len = value_states.shape[-2]
-        kv_seq_len += past_key_value.get_seq_length()
-
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+        k_pe = k_pe.view(bsz, q_len, 1, self.qk_rope_head_dim)
+        cos, sin = self.rotary_emb(k_pe,
+                                   seq_len=past_key_value.get_seq_length() +
+                                   q_len)
         q_pe, k_pe = apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
 
-        query_states = k_pe.new_empty(bsz, self.num_heads, q_len,
+        compressed_kv = past_key_value.append(compressed_kv,
+                                              self.layer_idx,
+                                              type="lora",
+                                              inc_seq_len=False)
+        kv_seq_len = compressed_kv.shape[1]
+        k_pe = past_key_value.append(k_pe,
+                                     self.layer_idx,
+                                     type="key",
+                                     inc_seq_len=True)
+        k_pe = k_pe.view(bsz, kv_seq_len, 1, self.qk_rope_head_dim)
+
+        kv = self.kv_b_proj(self.kv_a_layernorm(compressed_kv)).view(
+            bsz, kv_seq_len, self.num_heads,
+            self.qk_nope_head_dim + self.v_head_dim)
+        k_nope, value_states = torch.split(
+            kv, [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
+
+        query_states = k_pe.new_empty(bsz, q_len, self.num_heads,
                                       self.q_head_dim)
         query_states[:, :, :, :self.qk_nope_head_dim] = q_nope
         query_states[:, :, :, self.qk_nope_head_dim:] = q_pe
 
-        key_states = k_pe.new_empty(bsz, self.num_heads, q_len,
+        key_states = k_pe.new_empty(bsz, kv_seq_len, self.num_heads,
                                     self.q_head_dim)
         key_states[:, :, :, :self.qk_nope_head_dim] = k_nope
         key_states[:, :, :, self.qk_nope_head_dim:] = k_pe
 
-        if self.q_head_dim != self.v_head_dim:
-            value_states = F.pad(value_states,
-                                 [0, self.q_head_dim - self.v_head_dim])
-
-        # TODO: These transpose are quite inefficient but Flash Attention requires the layout [batch_size, sequence_length, num_heads, head_dim]. We would need to refactor the KV cache
-        # to be able to avoid many of these transpose/reshape/view.
-        query_states = query_states.transpose(1, 2)
-        key_states = key_states.transpose(1, 2)
-        value_states = value_states.transpose(1, 2)
-
-        value_states = past_key_value.append(value_states,
-                                             self.layer_idx,
-                                             type="value",
-                                             inc_seq_len=False)
-        key_states = past_key_value.append(key_states,
-                                           self.layer_idx,
-                                           type="key",
-                                           inc_seq_len=True)
+        value_states = F.pad(value_states,
+                             [0, self.q_head_dim - self.v_head_dim])
 
         dropout_rate = self.attention_dropout if self.training else 0.0
-
-        # In PEFT, usually we cast the layer norms in float32 for training stability reasons
-        # therefore the input hidden states gets silently casted in float32. Hence, we need
-        # cast them back in the correct dtype just to be sure everything works as expected.
-        # This might slowdown training & inference so it is recommended to not cast the LayerNorms
-        # in fp32. (DeepseekV2RMSNorm handles it correctly)
-
-        input_dtype = query_states.dtype
-        if input_dtype == torch.float32:
-            # Handle the case where the model is quantized
-            if hasattr(self.config, "_pre_quantization_dtype"):
-                target_dtype = self.config._pre_quantization_dtype
-            elif torch.is_autocast_enabled():
-                target_dtype = torch.get_autocast_gpu_dtype()
-            else:
-                target_dtype = (self.q_proj.weight.dtype if self.q_lora_rank
-                                is None else self.q_a_proj.weight.dtype)
-
-            logger.warning_once(
-                f"The input hidden states seems to be silently casted in float32, this might be related to"
-                f" the fact you have upcasted embedding or layer norm layers in float32. We will cast back the input in"
-                f" {target_dtype}.")
-
-            query_states = query_states.to(target_dtype)
-            key_states = key_states.to(target_dtype)
-            value_states = value_states.to(target_dtype)
 
         attn_output = self._flash_attention_forward(
             query_states,
