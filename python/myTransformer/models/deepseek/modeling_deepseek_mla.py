@@ -35,7 +35,7 @@ from transformers.utils.import_utils import is_torch_fx_available
 from .configuration_deepseek import DeepseekV2Config
 
 import flashinfer
-from ...cache.kvcache_fa import CustomStaticCache, prepare_cache_for_generation
+from ...cache.kvcache_mla import CustomStaticCache, prepare_cache_for_generation
 from ..utils import SiLUAndMul
 import torch.distributed as dist
 import numpy as np
@@ -216,6 +216,57 @@ class CustomDeepseekV2Attention(DeepseekV2FlashAttention2):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.weight_absorpt = False
+
+    def convert_weight_absorption(self):
+        if not self.weight_absorpt:
+            device = self.kv_b_proj.weight.data.device
+            dtype = self.kv_b_proj.weight.data.dtype
+
+            head_nope_dim = self.num_heads * self.qk_nope_head_dim
+            head_rope_dim = self.num_heads * self.qk_rope_head_dim
+
+            if self.q_lora_rank is None:
+                q_nope_proj = self.q_proj.weight.data[:self.
+                                                      qk_nope_head_dim, :]
+                q_rope_proj = self.q_proj.weight.data[
+                    self.qk_nope_head_dim:, :]
+                del self.q_proj
+            else:
+                raise NotImplementedError
+
+            k_up_proj = self.kv_b_proj.weight.data[:head_nope_dim, :]
+            v_up_proj = self.kv_b_proj.weight.data[head_nope_dim:, :]
+            del self.kv_b_proj
+
+            o_proj = self.o_proj.weight.data
+            del self.o_proj
+
+            self.q_rope_proj = nn.Linear(self.hidden_size,
+                                         head_rope_dim,
+                                         bias=False,
+                                         device=device,
+                                         dtype=dtype)
+            self.q_rope_proj.weight.data[:, :] = q_rope_proj
+            del q_rope_proj
+
+            self.qk_proj = nn.Linear(self.hidden_size,
+                                     self.kv_lora_rank,
+                                     bias=False,
+                                     device=device,
+                                     dtype=dtype)
+            torch.matmul(k_up_proj.transpose(0, 1),
+                         q_nope_proj,
+                         out=self.qk_proj.weight.data)
+            del k_up_proj, q_nope_proj
+
+            self.vo_proj = nn.Linear(self.kv_lora_rank,
+                                     self.hidden_size,
+                                     bias=False,
+                                     device=device,
+                                     dtype=dtype)
+            torch.matmul(o_proj, v_up_proj, out=self.vo_proj.weight.data)
+            del o_proj, v_up_proj
 
     def forward(
         self,
@@ -244,6 +295,7 @@ class CustomDeepseekV2Attention(DeepseekV2FlashAttention2):
             q = self.q_proj(hidden_states)
         else:
             q = self.q_b_proj(self.q_a_layernorm(self.q_a_proj(hidden_states)))
+
         q = q.view(bsz, q_len, self.num_heads, self.q_head_dim)
         q_nope, q_pe = torch.split(
             q, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
@@ -251,41 +303,43 @@ class CustomDeepseekV2Attention(DeepseekV2FlashAttention2):
         compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
         compressed_kv, k_pe = torch.split(
             compressed_kv, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
+
         k_pe = k_pe.view(bsz, q_len, 1, self.qk_rope_head_dim)
-        kv = (self.kv_b_proj(self.kv_a_layernorm(compressed_kv)).view(
-            bsz, q_len, self.num_heads,
-            self.qk_nope_head_dim + self.v_head_dim))
+        cos, sin = self.rotary_emb(k_pe,
+                                   seq_len=past_key_value.get_seq_length() +
+                                   q_len)
+        q_pe, k_pe = apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
+
+        compressed_kv = past_key_value.append(compressed_kv,
+                                              self.layer_idx,
+                                              type="lora",
+                                              inc_seq_len=False)
+        kv_seq_len = compressed_kv.shape[1]
+        k_pe = past_key_value.append(k_pe,
+                                     self.layer_idx,
+                                     type="key",
+                                     inc_seq_len=True)
+        k_pe = k_pe.view(bsz, kv_seq_len, 1, self.qk_rope_head_dim)
+
+        kv = self.kv_b_proj(self.kv_a_layernorm(compressed_kv)).view(
+            bsz, kv_seq_len, self.num_heads,
+            self.qk_nope_head_dim + self.v_head_dim)
 
         k_nope, value_states = torch.split(
             kv, [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
-        kv_seq_len = value_states.shape[1]
-        kv_seq_len += past_key_value.get_seq_length()
-
-        cos, sin = self.rotary_emb(k_pe, seq_len=kv_seq_len)
-        q_pe, k_pe = apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
 
         query_states = k_pe.new_empty(bsz, q_len, self.num_heads,
                                       self.q_head_dim)
         query_states[:, :, :, :self.qk_nope_head_dim] = q_nope
         query_states[:, :, :, self.qk_nope_head_dim:] = q_pe
 
-        key_states = k_pe.new_empty(bsz, q_len, self.num_heads,
+        key_states = k_pe.new_empty(bsz, kv_seq_len, self.num_heads,
                                     self.q_head_dim)
         key_states[:, :, :, :self.qk_nope_head_dim] = k_nope
         key_states[:, :, :, self.qk_nope_head_dim:] = k_pe
 
-        if self.q_head_dim != self.v_head_dim:
-            value_states = F.pad(value_states,
-                                 [0, self.q_head_dim - self.v_head_dim])
-
-        value_states = past_key_value.append(value_states,
-                                             self.layer_idx,
-                                             type="value",
-                                             inc_seq_len=False)
-        key_states = past_key_value.append(key_states,
-                                           self.layer_idx,
-                                           type="key",
-                                           inc_seq_len=True)
+        value_states = F.pad(value_states,
+                             [0, self.q_head_dim - self.v_head_dim])
 
         dropout_rate = self.attention_dropout if self.training else 0.0
 
