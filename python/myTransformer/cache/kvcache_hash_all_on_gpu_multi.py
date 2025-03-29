@@ -227,10 +227,12 @@ class HashStaticCache(CustomStaticCache):
                                            self.seq_len:self.seq_len + 1, :, :]
         # print("debugs")
         KVLib.decode_multi_hash_encode(
-        # decode_multi_hash_encode(
-            key, self.hash_weights[layer_idx],
+            # decode_multi_hash_encode(
+            key,
+            self.hash_weights[layer_idx],
             self.layer_hash_caches[layer_idx],
-            self.layer_norm_caches[layer_idx], query,
+            self.layer_norm_caches[layer_idx],
+            query,
             self.query_code_buffers[self.layer_devices[layer_idx]],
             self.hash_packbit_aux_tensors[self.layer_devices[layer_idx]],
             self.seq_len)
@@ -261,7 +263,7 @@ class HashStaticCache(CustomStaticCache):
         if self.sparse_ratio < 1:
             fetch_num = int(seq_len * self.sparse_ratio)
         else:
-            fetch_num = min(int(self.sparse_ratio), self.seq_len)
+            fetch_num = min(int(self.sparse_ratio), seq_len)
         # topk_indices = torch.topk(score, fetch_num, dim=-1,
         #                           largest=largest).indices.int()
         topk_indices = KVLib.batch_topk(score, fetch_num, largest)

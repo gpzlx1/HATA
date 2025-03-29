@@ -12,6 +12,8 @@ from dataloader import (
     NIAHManager,
     RULERManager,
     LongBenchV2Manager,
+    MathManager,
+    HumanEvalManager,
 )
 
 from utils import DefaultDataCollator
@@ -143,9 +145,6 @@ if __name__ == "__main__":
         "--dataset_name",
         type=str,
         default="longbench",
-        choices=[
-            "longbench", "infinitebench", "niah", "ruler", "longbench-v2"
-        ],
     )
     parser.add_argument("--output_dir", type=str, required=True)
     parser.add_argument("--e",
@@ -193,6 +192,18 @@ if __name__ == "__main__":
         tasks = dataset_manager.get_dataset_names()
     elif args.dataset_name == "longbench-v2":
         dataset_manager = LongBenchV2Manager(
+            args.dataset_path,
+            args.dataset_path,
+        )
+        tasks = dataset_manager.get_dataset_names()
+    elif args.dataset_name == "math":
+        dataset_manager = MathManager(
+            args.dataset_path,
+            args.dataset_path,
+        )
+        tasks = dataset_manager.get_dataset_names()
+    elif args.dataset_name == "humaneval":
+        dataset_manager = HumanEvalManager(
             args.dataset_path,
             args.dataset_path,
         )
@@ -246,8 +257,17 @@ if __name__ == "__main__":
         remove_columns = []
         for key in raw_data[0]:
             if key not in [
-                    "length", "all_classes", "answers", "depth_percent",
-                    "difficulty", "domain", "sub_domain", "answer"
+                    "length",
+                    "all_classes",
+                    "answers",
+                    "depth_percent",
+                    "difficulty",
+                    "domain",
+                    "sub_domain",
+                    "answer",
+                    "canonical_solution",
+                    "test",
+                    "entry_point",
             ]:
                 remove_columns.append(key)
         encoded_data = raw_data.map(
@@ -294,7 +314,7 @@ if __name__ == "__main__":
 
         if warm_up:
             continue
-        
+
         for i, x in enumerate(
                 tqdm(dataloader, desc=f"Send tasks for {dataset_name}")):
             if x["input_ids"].size(-1) < args.min_seq_len:

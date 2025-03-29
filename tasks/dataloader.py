@@ -88,7 +88,15 @@ datasets_prompt = {
 
     # LongBench-v2
     "longbench-v2":
-    "Please read the following text and answer the question below.\n\n<text>\n{context}\n</text>\n\nWhat is the correct answer to this question: {question}\nChoices:\n(A) {C_A}\n(B) {C_B}\n(C) {C_C}\n(D) {C_D}\n\nFormat your response as follows: \"The correct answer is (insert answer here)\"."
+    "Please read the following text and answer the question below.\n\n<text>\n{context}\n</text>\n\nWhat is the correct answer to this question: {question}\nChoices:\n(A) {C_A}\n(B) {C_B}\n(C) {C_C}\n(D) {C_D}\n\nFormat your response as follows: \"The correct answer is (insert answer here)\".",
+
+    # Math-500
+    "math":
+    "Solve the following math problem step by step. The last line of your response should be of the form Answer: $ANSWER (without quotes) where $ANSWER is the answer to the problem.\n\n{problem}\n\nRemember to put your answer on its own line after \"Answer:\", and you do not need to use a \\boxed command.",
+
+    # HumanEval:
+    "humaneval":
+    "Read the following function signature and docstring, and fully implement the function described. Your response should only contain the code for this function.\n\n{prompt}",
 }
 
 datasets_maxlen = {
@@ -148,6 +156,10 @@ datasets_maxlen = {
 
     # LongBench-v2
     "longbench-v2": 128,
+
+    # math
+    "math": 8192,
+    "humaneval": 1024,
 }
 
 datasets_category = {
@@ -361,19 +373,19 @@ class LongBenchManager(DatasetManager):
     def get_dataset_names(with_e=False):
         if with_e:
             datasets = [
-                "qasper_e",
-                "multifieldqa_en_e",
-                "hotpotqa_e",
-                "2wikimqa_e",
-                "trec_e",
-                "triviaqa_e",
-                "samsum_e",
-                "passage_count_e",
-                "passage_retrieval_en_e",
-                "lcc_e",
+                # "lcc_e",
                 "repobench-p_e",
-                "gov_report_e",
-                "multi_news_e",
+                # "gov_report_e",
+                # "multi_news_e",
+                "qasper_e",
+                # "multifieldqa_en_e",
+                "hotpotqa_e",
+                # "2wikimqa_e",
+                # "trec_e",
+                # "triviaqa_e",
+                # "samsum_e",
+                # "passage_count_e",
+                # "passage_retrieval_en_e",
             ]
         else:
             datasets = [
@@ -643,19 +655,19 @@ class RULERManager(DatasetManager):
     @staticmethod
     def get_dataset_names():
         datasets = [
-            "niah_single_1",
-            "niah_single_2",
-            "niah_single_3",
-            "niah_multikey_1",
             "niah_multikey_2",
-            "niah_multikey_3",
             "niah_multivalue",
-            "niah_multiquery",
             "vt",
-            "cwe",
             "fwe",
+            "niah_multiquery",
             "qa_1",
             "qa_2",
+            "niah_multikey_1",
+            "niah_single_3",
+            "niah_single_2",
+            "niah_single_1",
+            # "niah_multikey_3",
+            # "cwe",
         ]
         return datasets
 
@@ -758,6 +770,138 @@ class LongBenchV2Manager(DatasetManager):
                 prompt = tokenizer.decode(tokenized_prompt[-max_length:],
                                           skip_special_tokens=True)
 
+            encoded = apply_chat_template(prompt, tokenizer)
+
+            outputs["input_ids"].append(encoded["input_ids"])
+            outputs["attention_mask"].append(encoded["attention_mask"])
+            outputs["index"].append(index)
+
+        return outputs
+
+
+class MathManager(DatasetManager):
+
+    def __init__(
+        self,
+        path,
+        data_dir,
+    ):
+        super().__init__(path, data_dir)
+
+    @staticmethod
+    def get_dataset_names():
+        datasets = [
+            "math",
+        ]
+        return datasets
+
+    def get_data(self, dataset_name):
+        data = []
+        with open(os.path.join(self.data_dir, 'test.jsonl')) as f:
+            for line in f:
+                line = line.strip()
+                item = json.loads(line)
+                data.append(item)
+        return Dataset.from_list(data)
+
+    def get_dataset_info(self, dataset_name):
+        return (
+            datasets_prompt[dataset_name],
+            datasets_maxlen[dataset_name],
+            None,
+        )
+
+    @staticmethod
+    def process_raw_data(
+        data,
+        indices,
+        tokenizer,
+        apply_chat_template,
+        task,
+        max_length=3500,
+        truncate_from_middle=True,
+    ):
+        outputs = {"input_ids": [], "attention_mask": [], "index": []}
+        for it, index in enumerate(indices):
+            prompt_template = datasets_prompt[task]
+            prompt = prompt_template.format(problem=data["problem"][it], )
+
+            if truncate_from_middle:
+                tokenized_prompt = tokenizer.encode(prompt)
+                if len(tokenized_prompt) > max_length:
+                    half = int(max_length / 2)
+                    prompt = tokenizer.decode(
+                        tokenized_prompt[:half],
+                        skip_special_tokens=True) + tokenizer.decode(
+                            tokenized_prompt[-half:], skip_special_tokens=True)
+            else:
+                tokenized_prompt = tokenizer.encode(prompt)
+                prompt = tokenizer.decode(tokenized_prompt[-max_length:],
+                                          skip_special_tokens=True)
+            encoded = apply_chat_template(prompt, tokenizer)
+
+            outputs["input_ids"].append(encoded["input_ids"])
+            outputs["attention_mask"].append(encoded["attention_mask"])
+            outputs["index"].append(index)
+
+        return outputs
+
+
+class HumanEvalManager(DatasetManager):
+
+    def __init__(
+        self,
+        path,
+        data_dir,
+    ):
+        super().__init__(path, data_dir)
+
+    @staticmethod
+    def get_dataset_names():
+        datasets = [
+            "humaneval",
+        ]
+        return datasets
+
+    def get_data(self, dataset_name):
+        data = load_dataset("openai_humaneval",
+                            cache_dir=self.data_dir)["test"]
+        return data
+
+    def get_dataset_info(self, dataset_name):
+        return (
+            datasets_prompt[dataset_name],
+            datasets_maxlen[dataset_name],
+            None,
+        )
+
+    @staticmethod
+    def process_raw_data(
+        data,
+        indices,
+        tokenizer,
+        apply_chat_template,
+        task,
+        max_length=3500,
+        truncate_from_middle=True,
+    ):
+        outputs = {"input_ids": [], "attention_mask": [], "index": []}
+        for it, index in enumerate(indices):
+            prompt_template = datasets_prompt[task]
+            prompt = prompt_template.format(prompt=data["prompt"][it], )
+
+            if truncate_from_middle:
+                tokenized_prompt = tokenizer.encode(prompt)
+                if len(tokenized_prompt) > max_length:
+                    half = int(max_length / 2)
+                    prompt = tokenizer.decode(
+                        tokenized_prompt[:half],
+                        skip_special_tokens=True) + tokenizer.decode(
+                            tokenized_prompt[-half:], skip_special_tokens=True)
+            else:
+                tokenized_prompt = tokenizer.encode(prompt)
+                prompt = tokenizer.decode(tokenized_prompt[-max_length:],
+                                          skip_special_tokens=True)
             encoded = apply_chat_template(prompt, tokenizer)
 
             outputs["input_ids"].append(encoded["input_ids"])
