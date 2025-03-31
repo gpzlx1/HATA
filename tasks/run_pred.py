@@ -14,6 +14,7 @@ from dataloader import (
     LongBenchV2Manager,
     MathManager,
     HumanEvalManager,
+    ARCManager,
 )
 
 from utils import DefaultDataCollator
@@ -208,6 +209,12 @@ if __name__ == "__main__":
             args.dataset_path,
         )
         tasks = dataset_manager.get_dataset_names()
+    elif args.dataset_name == "arc":
+        dataset_manager = ARCManager(
+            args.dataset_path,
+            args.dataset_path,
+        )
+        tasks = dataset_manager.get_dataset_names()
     print("datasets: ", tasks)
 
     # load model and tokenizer
@@ -268,6 +275,7 @@ if __name__ == "__main__":
                     "canonical_solution",
                     "test",
                     "entry_point",
+                    "answerKey",
             ]:
                 remove_columns.append(key)
         encoded_data = raw_data.map(

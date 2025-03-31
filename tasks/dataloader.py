@@ -97,6 +97,12 @@ datasets_prompt = {
     # HumanEval:
     "humaneval":
     "Read the following function signature and docstring, and fully implement the function described. Your response should only contain the code for this function.\n\n{prompt}",
+
+    # arc
+    "arc-easy":
+    "Answer the following multiple choice question. The last line of your response should be of the following format: 'Answer: $LETTER' (without quotes) where LETTER is one of ABCD. Think step by step before answering.\n\n{question}\n",
+    "arc-challenge":
+    "Answer the following multiple choice question. The last line of your response should be of the following format: 'Answer: $LETTER' (without quotes) where LETTER is one of ABCD. Think step by step before answering.\n\n{question}\n",
 }
 
 datasets_maxlen = {
@@ -157,9 +163,11 @@ datasets_maxlen = {
     # LongBench-v2
     "longbench-v2": 128,
 
-    # math
+    # other
     "math": 8192,
     "humaneval": 1024,
+    "arc-easy": 4096,
+    "arc-challenge": 4096,
 }
 
 datasets_category = {
@@ -373,19 +381,19 @@ class LongBenchManager(DatasetManager):
     def get_dataset_names(with_e=False):
         if with_e:
             datasets = [
-                # "lcc_e",
+                "lcc_e",
                 "repobench-p_e",
-                # "gov_report_e",
-                # "multi_news_e",
+                "gov_report_e",
+                "multi_news_e",
                 "qasper_e",
-                # "multifieldqa_en_e",
+                "multifieldqa_en_e",
                 "hotpotqa_e",
-                # "2wikimqa_e",
-                # "trec_e",
-                # "triviaqa_e",
-                # "samsum_e",
-                # "passage_count_e",
-                # "passage_retrieval_en_e",
+                "2wikimqa_e",
+                "trec_e",
+                "triviaqa_e",
+                "samsum_e",
+                "passage_count_e",
+                "passage_retrieval_en_e",
             ]
         else:
             datasets = [
@@ -889,6 +897,81 @@ class HumanEvalManager(DatasetManager):
         for it, index in enumerate(indices):
             prompt_template = datasets_prompt[task]
             prompt = prompt_template.format(prompt=data["prompt"][it], )
+
+            if truncate_from_middle:
+                tokenized_prompt = tokenizer.encode(prompt)
+                if len(tokenized_prompt) > max_length:
+                    half = int(max_length / 2)
+                    prompt = tokenizer.decode(
+                        tokenized_prompt[:half],
+                        skip_special_tokens=True) + tokenizer.decode(
+                            tokenized_prompt[-half:], skip_special_tokens=True)
+            else:
+                tokenized_prompt = tokenizer.encode(prompt)
+                prompt = tokenizer.decode(tokenized_prompt[-max_length:],
+                                          skip_special_tokens=True)
+            encoded = apply_chat_template(prompt, tokenizer)
+
+            outputs["input_ids"].append(encoded["input_ids"])
+            outputs["attention_mask"].append(encoded["attention_mask"])
+            outputs["index"].append(index)
+
+        return outputs
+
+
+class ARCManager(DatasetManager):
+
+    def __init__(
+        self,
+        path,
+        data_dir,
+    ):
+        super().__init__(path, data_dir)
+
+    @staticmethod
+    def get_dataset_names():
+        datasets = [
+            "arc-easy",
+            "arc-challenge",
+        ]
+        return datasets
+
+    def get_data(self, dataset_name):
+        if dataset_name == "arc-challenge":
+            data = load_dataset("allenai/ai2_arc",
+                                "ARC-Challenge",
+                                cache_dir=self.data_dir)["test"]
+        else:
+            data = load_dataset("allenai/ai2_arc",
+                                "ARC-Easy",
+                                cache_dir=self.data_dir)["test"]
+        return data
+
+    def get_dataset_info(self, dataset_name):
+        return (
+            datasets_prompt[dataset_name],
+            datasets_maxlen[dataset_name],
+            None,
+        )
+
+    @staticmethod
+    def process_raw_data(
+        data,
+        indices,
+        tokenizer,
+        apply_chat_template,
+        task,
+        max_length=3500,
+        truncate_from_middle=True,
+    ):
+        outputs = {"input_ids": [], "attention_mask": [], "index": []}
+        for it, index in enumerate(indices):
+            prompt_template = datasets_prompt[task]
+            prompt = prompt_template.format(question=data["question"][it], )
+            choices = data["choices"][it]["text"]
+            labels = data["choices"][it]["label"]
+            for it in range(len(labels)):
+                prompt += f"{labels[it]}) {choices[it]}\n"
 
             if truncate_from_middle:
                 tokenized_prompt = tokenizer.encode(prompt)
