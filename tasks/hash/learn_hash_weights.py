@@ -125,7 +125,7 @@ class HashTrainer(torch.nn.Module):
         balance_loss = balance_loss.sum()
 
         # decorrelattion_loss
-        eye = torch.eye(self.hash_weight.shape[1],
+        eye = torch.eye(self.hash_weight.shape[2],
                         device=q.device,
                         requires_grad=False).unsqueeze(0)
         decorrelattion_loss = self.hash_weight.transpose(-1,
@@ -163,6 +163,9 @@ def load_chunks(path, layer_idx, num_chunks, dst_device, shuffle=True):
         os.path.join(path, f"layer{layer_idx:02d}/chunk*_k.pt"))
     s_chunks = glob.glob(
         os.path.join(path, f"layer{layer_idx:02d}/chunk*_s.pt"))
+    q_chunks = sorted(q_chunks)
+    k_chunks = sorted(k_chunks)
+    s_chunks = sorted(s_chunks)
     chunks = list(zip(q_chunks, k_chunks, s_chunks))
     random.shuffle(chunks)
     load_chunks = chunks[:num_chunks]

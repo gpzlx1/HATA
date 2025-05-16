@@ -199,6 +199,10 @@ if __name__ == "__main__":
         elif model_name == "llama2":
             tokenizer.pad_token = "[PAD]"
             tokenizer.padding_side = "left"
+    elif model_arch == "qwen2":
+        from myTransformer.models.qwen2.modeling_qwen2_fa_build_dataset import CustomQwen2ForCausalLM
+        model = CustomQwen2ForCausalLM.from_pretrained(
+            args.model, torch_dtype=torch.bfloat16, config=config)
 
     device_ids = [i for i in range(args.pp_num)]
     if len(device_ids) > 1:

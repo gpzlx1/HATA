@@ -24,11 +24,20 @@ python build_dataset.py \
     --longbench_v2_path /nfs/shared_LLM_dataset/LongBench-v2 \
     --max_context_length 32768 --apply_template --pos_sample_ratio 0.1
 
-# For longchat-7b-v1.5-32k
+# For Qwen2.5-14B-Instruct-1M
 python build_dataset.py \
-    --model /nfs/shared_LLM_model/lmsys/longchat-7b-v1.5-32k \
-    --save_path /mnt/ramdisk/longchat-7b-v1.5-32k \
+    --model /nfs/shared_LLM_model/Qwen/Qwen2.5-14B-Instruct-1M \
+    --save_path /mnt/ramdisk/Qwen2.5-14B-Instruct-1M \
     --longbench_path /nfs/shared_LLM_dataset/LongBench/data \
     --longbench_v2_path /nfs/shared_LLM_dataset/LongBench-v2 \
-    --max_context_length 32768 --apply_template --pos_sample_ratio 0.1
+    --max_context_length 131072 --apply_template --pos_sample_ratio 0.1 \
+    --pp_num 2
 
+# For Qwen2.5-32B-Instruct
+python build_dataset.py \
+    --model /nfs/shared_LLM_model/Qwen/Qwen2.5-32B-Instruct \
+    --save_path /mnt/ramdisk/Qwen2.5-32B-Instruct \
+    --longbench_path /nfs/shared_LLM_dataset/LongBench/data \
+    --longbench_v2_path /nfs/shared_LLM_dataset/LongBench-v2 \
+    --max_context_length 32768 --apply_template --pos_sample_ratio 0.1 \
+    --pp_num 4
