@@ -6,26 +6,19 @@ from tqdm import tqdm
 from functools import partial
 from accelerate import dispatch_model, infer_auto_device_map
 from accelerate.utils import get_balanced_memory
-from dataloader import (
-    LongBenchManager,
-    InfiniteBenchManager,
-    NIAHManager,
-    RULERManager,
-    LongBenchV2Manager,
-    MathManager,
-    HumanEvalManager,
-    ARCManager,
+from dataset_utils import (
+    DefaultDataCollator,
+    GetManagerAndTasks
 )
 
-from utils import DefaultDataCollator
-from llama_utils import (
-    llama_load_model_and_tokenizer,
+from model_utils import (
+    load_config_and_tokenizer,
+    load_model,
     comm_generate,
 )
 
 import torch.multiprocessing as mp
 
-from typing import List
 
 import signal
 
@@ -53,10 +46,11 @@ def pred_loop_func(args, rank, task_queue, dataset_manager):
     seed_everything(args.seed)
 
     args.method = args.method.lower()
-    model_load_kwargs = {}
 
-    model, tokenizer, _, _ = (llama_load_model_and_tokenizer(
-        args, args.model_name_or_path, **model_load_kwargs))
+    model_meta, model_config, tokenizer, _, _ = load_config_and_tokenizer(
+        args, args.model_name_or_path)
+    model = load_model(model_meta, model_config, args.model_name_or_path)
+    model.generation_config.pad_token_id = tokenizer.pad_token_id
 
     device_ids = [args.pp_num * rank + i for i in range(args.pp_num)]
     if len(device_ids) > 1:
@@ -165,74 +159,24 @@ if __name__ == "__main__":
     print(args)
     seed_everything(args.seed)
 
-    if args.dataset_name == "longbench":
-        dataset_manager = LongBenchManager(
-            args.dataset_path,
-            args.dataset_path,
-            "test",
-            args.e,
-        )
-        tasks = dataset_manager.get_dataset_names(with_e=args.e)
-    elif args.dataset_name == "infinitebench":
-        dataset_manager = InfiniteBenchManager(
-            args.dataset_path,
-            args.dataset_path,
-        )
-        tasks = dataset_manager.get_dataset_names()
-    elif args.dataset_name == "niah":
-        dataset_manager = NIAHManager(
-            args.dataset_path,
-            args.dataset_path,
-        )
-        tasks = dataset_manager.get_dataset_names()
-    elif args.dataset_name == "ruler":
-        dataset_manager = RULERManager(
-            args.dataset_path,
-            args.dataset_path,
-        )
-        tasks = dataset_manager.get_dataset_names()
-    elif args.dataset_name == "longbench-v2":
-        dataset_manager = LongBenchV2Manager(
-            args.dataset_path,
-            args.dataset_path,
-        )
-        tasks = dataset_manager.get_dataset_names()
-    elif args.dataset_name == "math":
-        dataset_manager = MathManager(
-            args.dataset_path,
-            args.dataset_path,
-        )
-        tasks = dataset_manager.get_dataset_names()
-    elif args.dataset_name == "humaneval":
-        dataset_manager = HumanEvalManager(
-            args.dataset_path,
-            args.dataset_path,
-        )
-        tasks = dataset_manager.get_dataset_names()
-    elif args.dataset_name == "arc":
-        dataset_manager = ARCManager(
-            args.dataset_path,
-            args.dataset_path,
-        )
-        tasks = dataset_manager.get_dataset_names()
+    dataset_manager, tasks = GetManagerAndTasks(
+        args.dataset_name, args.dataset_path, args.e)
     print("datasets: ", tasks)
 
     # load model and tokenizer
     args.method = args.method.lower()
-    model_load_kwargs = {}
-    model, tokenizer, generate_kwargs, apply_chat_template = (
-        llama_load_model_and_tokenizer(args, args.model_name_or_path,
-                                       **model_load_kwargs))
+    model_meta, model_config, tokenizer, generate_kwargs, apply_chat_template = load_config_and_tokenizer(
+        args, args.model_name_or_path)
 
     # set generate_kwargs
-    if hasattr(model, "generation_config"):
-        eos_token_id = model.generation_config.eos_token_id
+    if hasattr(model_config, "eos_token_id"):
+        eos_token_id = model_config.eos_token_id
     else:
         eos_token_id = tokenizer.eos_token_id
     if isinstance(eos_token_id, int):
         eos_token_id = [eos_token_id]
 
-    del model
+    exit()
 
     # start processes
     task_queue = mp.Queue(maxsize=args.mp_num)

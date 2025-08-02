@@ -1,11 +1,14 @@
 import os
 import json
-from functools import partial
-
 import torch
+from dataclasses import dataclass
+from transformers.tokenization_utils import PreTrainedTokenizer
+from typing import List, Dict, Any
+import time
+import numpy as np
+
 from datasets import load_dataset, Dataset
 
-from utils import DefaultDataCollator
 
 datasets_prompt = {
     # LongBench
@@ -994,64 +997,205 @@ class ARCManager(DatasetManager):
         return outputs
 
 
-if __name__ == "__main__":
-    dataset_path = "/nfs/shared_LLM_dataset/LongBench"
-    with_e = True
+def get_max_length_in_nested_lists(lst):
+    if len(lst) and isinstance(lst[0], list):
+        lengths = []
+        for elem in lst:
+            length = get_max_length_in_nested_lists(elem)
+            lengths.append(length)
+        max_length = max(lengths)
+        return max_length
+    else:
+        return len(lst)
 
-    dataset_manager = LongBenchManager(dataset_path,
-                                       dataset_path,
-                                       "test",
-                                       with_e=with_e)
-    task = dataset_manager.get_dataset_names(with_e)[0]
-    print(task)
 
-    raw_data = dataset_manager.get_data(task)
+def pad_nested_lists(lst, max_length, padding_value, padding_side="right"):
+    if isinstance(lst, list) and len(lst) and isinstance(lst[0], list):
+        masks = []
+        for i, elem in enumerate(lst):
+            lst[i], mask = pad_nested_lists(elem, max_length, padding_value,
+                                            padding_side)
+            masks.append(mask)
+        return lst, masks
+    elif isinstance(lst, list):
+        if padding_side == "right":
+            mask = [1] * len(lst) + [0] * (max_length - len(lst))
+            lst = lst + [padding_value for _ in range(max_length - len(lst))]
+            return lst, mask
+        else:
+            mask = [0] * (max_length - len(lst)) + [1] * len(lst)
+            lst = [padding_value for _ in range(max_length - len(lst))] + lst
+            return lst, mask
+    else:
+        raise NotImplementedError(f"Unrecognized type {lst}")
 
-    from transformers import LlamaTokenizer
 
-    model_name = "llama2-7b-chat-4k"
-    model_path = "/nfs/shared_LLM_model/meta-llama/Llama-2-7b-chat-hf"
-    model_maxlen = 3500
-    tokenizer = LlamaTokenizer.from_pretrained(model_path)
+@dataclass
+class DefaultDataCollator:
+    """
+    Data collator that can:
+    1. Dynamically pad all inputs received. The inputs must be dict of lists.
+    2. Add position_ids based on attention_mask if required.
+    """
+    tokenizer: PreTrainedTokenizer
+    attention_padding_value: int = 0
+    label_padding_value: int = -100
 
-    tokenizer.pad_token = '[PAD]'
-    tokenizer.padding_side = "left"
+    keys_to_tensorize = {
+        "input_ids", "attention_mask", "labels", "position_ids",
+        "token_type_ids", "depth", "index"
+    }
 
-    def apply_chat_template(prompt, tokenizer):
-        prompt = f"[INST] {prompt} [/INST]"
-        encoded = tokenizer(prompt)
-        return encoded
+    def __call__(self, batch_elem: List) -> Dict[str, Any]:
+        first_elem = batch_elem[0]
+        return_batch = {}
 
-    process_fn = partial(
-        dataset_manager.process_longbench,
-        tokenizer=tokenizer,
-        apply_chat_template=apply_chat_template,
-        task=task,
-        max_length=1000,
-        truncate_from_middle=True,
-    )
+        for key, value in first_elem.items():
+            # HACK: any key containing attention_mask must be attention_mask
+            # important to assign different pad token for different types of inputs
+            if "attention_mask" in key:
+                pad_token_id = self.attention_padding_value
+            elif "label" in key:
+                pad_token_id = self.label_padding_value
+            else:
+                pad_token_id = self.tokenizer.pad_token_id
 
-    encoded_data = raw_data.map(
-        process_fn,
-        batched=True,
-        num_proc=8,
-        batch_size=10,
-        with_indices=True,
-        remove_columns=raw_data.column_names,
-    )
+            batch_value = [elem[key] for elem in batch_elem]
+            # pad all lists and nested lists
+            if isinstance(value, list) and key in self.keys_to_tensorize:
+                max_length = get_max_length_in_nested_lists(batch_value)
+                batch_value, _ = pad_nested_lists(batch_value, max_length,
+                                                  pad_token_id,
+                                                  self.tokenizer.padding_side)
 
-    all_dataset = (raw_data, encoded_data)
+            if key in self.keys_to_tensorize:
+                return_batch[key] = torch.tensor(batch_value)
+            else:
+                # handle strings and None
+                return_batch[key] = batch_value
+        return return_batch
 
-    data_collator = DefaultDataCollator(tokenizer=tokenizer)
 
-    dataloader = torch.utils.data.DataLoader(encoded_data,
-                                             batch_size=8,
-                                             collate_fn=data_collator)
+class TimeRecoder():
 
-    answers = raw_data["answers"]
+    def __init__(self, cuda_sync=True):
+        self.begins = {}
+        self.ends = {}
+        self.durations = {}
+        self.running_mask = {}
+        self.cuda_sync = cuda_sync
 
-    print(answers)
+    def start(self, name):
+        if name not in self.running_mask:
+            self.begins[name] = []
+            self.ends[name] = []
+            self.durations[name] = []
+            self.running_mask[name] = False
+        assert self.running_mask[name] == False, f"Event {name} is running!"
 
-    for x in dataloader:
-        print(x)
-        break
+        if self.cuda_sync:
+            torch.cuda.synchronize()
+        self.begins[name].append(time.time())
+        self.running_mask[name] = True
+
+    def end(self, name):
+        assert name in self.running_mask, f"Event {name} is not running!"
+        assert self.running_mask[name] == True, f"Event {name} is not running!"
+
+        if self.cuda_sync:
+            torch.cuda.synchronize()
+        self.ends[name].append(time.time())
+        self.durations[name].append(self.ends[name][-1] -
+                                    self.begins[name][-1])
+        self.running_mask[name] = False
+
+    def check_all_recoder(self):
+        for name in self.durations:
+            print(f"{name}: {np.mean(self.durations[name][2:]) * 1000:.3f}")
+
+
+TaskDict = {
+    "longbench": LongBenchManager,
+    "infinitebench": InfiniteBenchManager,
+    "niah": NIAHManager,
+    "ruler": RULERManager,
+    "longbench-v2": LongBenchV2Manager,
+    "math": MathManager,
+    "humaneval": HumanEvalManager,
+    "arc": ARCManager,
+}
+
+
+def GetManagerAndTasks(dataset_name, dataset_path, with_e=False):
+    if dataset_name == "longbench":
+        manager = LongBenchManager(dataset_path, dataset_path, "test", with_e)
+        return manager, manager.get_dataset_names(with_e)
+    elif dataset_name in TaskDict:
+        manager = TaskDict[dataset_name](dataset_path, dataset_path)
+        return manager, manager.get_dataset_names()
+    else:
+        raise ValueError(f"Unknown dataset name: {dataset_name}. "
+                         f"Available datasets: {list(TaskDict.keys())}.")
+
+
+# if __name__ == "__main__":
+#     dataset_path = "/nfs/shared_LLM_dataset/LongBench"
+#     with_e = True
+
+#     dataset_manager = LongBenchManager(dataset_path,
+#                                        dataset_path,
+#                                        "test",
+#                                        with_e=with_e)
+#     task = dataset_manager.get_dataset_names(with_e)[0]
+#     print(task)
+
+#     raw_data = dataset_manager.get_data(task)
+
+#     from transformers import LlamaTokenizer
+
+#     model_name = "llama2-7b-chat-4k"
+#     model_path = "/nfs/shared_LLM_model/meta-llama/Llama-2-7b-chat-hf"
+#     model_maxlen = 3500
+#     tokenizer = LlamaTokenizer.from_pretrained(model_path)
+
+#     tokenizer.pad_token = '[PAD]'
+#     tokenizer.padding_side = "left"
+
+#     def apply_chat_template(prompt, tokenizer):
+#         prompt = f"[INST] {prompt} [/INST]"
+#         encoded = tokenizer(prompt)
+#         return encoded
+
+#     process_fn = partial(
+#         dataset_manager.process_longbench,
+#         tokenizer=tokenizer,
+#         apply_chat_template=apply_chat_template,
+#         task=task,
+#         max_length=1000,
+#         truncate_from_middle=True,
+#     )
+
+#     encoded_data = raw_data.map(
+#         process_fn,
+#         batched=True,
+#         num_proc=8,
+#         batch_size=10,
+#         with_indices=True,
+#         remove_columns=raw_data.column_names,
+#     )
+
+#     all_dataset = (raw_data, encoded_data)
+
+#     data_collator = DefaultDataCollator(tokenizer=tokenizer)
+
+#     dataloader = torch.utils.data.DataLoader(encoded_data,
+#                                              batch_size=8,
+#                                              collate_fn=data_collator)
+
+#     answers = raw_data["answers"]
+
+#     print(answers)
+
+#     for x in dataloader:
+#         print(x)
+#         break
