@@ -17,6 +17,8 @@ from model_utils import (
     comm_generate,
 )
 
+import configparser
+
 import torch.multiprocessing as mp
 
 
@@ -159,11 +161,11 @@ def dispatch_model_to_devices(model, device_ids):
     return model
 
 
-def single_pref(args, dataset_manager, tasks):
+def single_pref(args, task_config, dataset_manager, tasks):
     # load model and tokenizer
     args.method = args.method.lower()
     model_meta, model_config, tokenizer, original_generate_kwargs, apply_chat_template = load_config_and_tokenizer(
-        args, args.model_name_or_path)
+        args, task_config, args.model_name_or_path)
     model = load_model(model_meta, model_config, args.model_name_or_path)
     model.generation_config.pad_token_id = tokenizer.pad_token_id
 
@@ -204,13 +206,13 @@ def single_pref(args, dataset_manager, tasks):
                                    x, model, tokenizer, dataset_name, dataset_manager, generate_kwargs, warm_up)
 
 
-def pred_loop_func(args, rank, task_queue, dataset_manager):
+def pred_loop_func(args, task_config, rank, task_queue, dataset_manager):
     seed_everything(args.seed)
 
     args.method = args.method.lower()
 
     model_meta, model_config, tokenizer, _, _ = load_config_and_tokenizer(
-        args, args.model_name_or_path)
+        args, task_config, args.model_name_or_path)
     model = load_model(model_meta, model_config, args.model_name_or_path)
     model.generation_config.pad_token_id = tokenizer.pad_token_id
 
@@ -279,19 +281,23 @@ if __name__ == "__main__":
     print(args)
     seed_everything(args.seed)
 
+    # load task config
+    task_config = configparser.ConfigParser()
+    out = task_config.read(args.config_file)
+
     dataset_manager, tasks = GetManagerAndTasks(
         args.dataset_name, args.dataset_path, args.e)
     print("datasets: ", tasks)
 
     if args.mp_num <= 1:
         # single process prediction
-        single_pref(args, dataset_manager, tasks)
+        single_pref(args, task_config, dataset_manager, tasks)
         exit()
 
     # load model and tokenizer
     args.method = args.method.lower()
     model_meta, model_config, tokenizer, generate_kwarg, apply_chat_template = load_config_and_tokenizer(
-        args, args.model_name_or_path)
+        args, task_config, args.model_name_or_path)
 
     if hasattr(model_config, "eos_token_id"):
         eos_token_id = model_config.eos_token_id
@@ -306,7 +312,7 @@ if __name__ == "__main__":
     for i in range(args.mp_num):
         p = mp.Process(
             target=pred_loop_func,
-            args=(args, i, task_queue, dataset_manager),
+            args=(args, task_config, i, task_queue, dataset_manager),
         )
         p.start()
         work_processes.append(p)

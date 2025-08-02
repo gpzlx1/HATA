@@ -47,7 +47,7 @@ def get_model_type_arch(model_name_or_path):
         raise ValueError("Unsupported model name")
 
 
-def load_config_and_tokenizer(args, model_name_or_path):
+def load_config_and_tokenizer(args, task_config, model_name_or_path):
     dtype = torch.float16
     model_config = AutoConfig.from_pretrained(model_name_or_path,
                                               trust_remote_code=True)
@@ -84,21 +84,21 @@ def load_config_and_tokenizer(args, model_name_or_path):
     if method == "flashattn":
         generate_config = {
             "max_gpu_cache_memory":
-            float(os.environ["CUDA_MEM"]) * 1024 * 1024 * 1024,  # 30GB
+            float(task_config.get('device', 'CUDA_MEM')) *
+            1024 * 1024 * 1024,  # 30GB
         }
 
     elif method == "hash":
         generate_config = {
             "max_gpu_cache_memory":
-            float(os.environ["CUDA_MEM"]) * 1024 * 1024 * 1024,
-            "hash_rbits": int(os.environ["RBIT"]),
-            "hash_weights_path": os.environ["HASH_WEIGHTS_PATH"],
-            # "hash_weights_path": None,
-            "sparse_ratio": float(os.environ["TOPK_RATIO"]),
-            "use_norm": int(os.environ["USE_NORM"]) > 0,
+            float(task_config.get('device', 'CUDA_MEM')) * 1024 * 1024 * 1024,
+            "hash_rbits": int(task_config.get('hata', 'RBIT')),
+            "hash_weights_path": task_config.get('hata', 'HASH_WEIGHTS_PATH'),
+            "sparse_ratio": float(task_config.get('dataset', 'TOPK_RATIO')),
+            "use_norm": int(task_config.get('hata', 'USE_NORM')) > 0,
             "with_bias": False,
-            "num_sink": int(os.environ["NUM_SINK"]),
-            "num_recent": int(os.environ["NUM_RECENT"]),
+            "num_sink": int(task_config.get('hata', 'NUM_SINK')),
+            "num_recent": int(task_config.get('hata', 'NUM_RECENT')),
         }
 
     else:
@@ -154,100 +154,6 @@ def load_model(model_meta, model_config, model_name_or_path):
         setattr(model.generation_config, key, value)
 
     return model
-
-
-def llama_load_model_and_tokenizer(args, model_name_or_path, **kwargs):
-    dtype = torch.float16
-    model_config = AutoConfig.from_pretrained(model_name_or_path,
-                                              trust_remote_code=True)
-    model_config.torch_dtype = dtype
-    generate_kwarg = {}
-
-    method = args.method.lower()
-
-    model_type, model_arch = get_model_type_arch(model_name_or_path)
-    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path,
-                                              fast_tokenizer=True,
-                                              use_fast=True)
-
-    # select apply_chat_template
-    if model_type == "llama2":
-        apply_chat_template = llama2_apply_chat_template
-        tokenizer.pad_token = "[PAD]"
-        tokenizer.padding_side = "left"
-
-    elif model_type == "llama3":
-        print("run llama3 model")
-        apply_chat_template = llama3_apply_chat_template
-        tokenizer.pad_token = tokenizer.eos_token
-        tokenizer.pad_token_id = tokenizer.eos_token_id
-        tokenizer.padding_side = "left"
-
-    elif model_type == "qwen2":
-        apply_chat_template = qwen2_apply_chat_template
-
-    else:
-        raise ValueError("Unsupported model name")
-
-    if method == "flashattn":
-        generate_config = {
-            "max_gpu_cache_memory":
-            float(os.environ["CUDA_MEM"]) * 1024 * 1024 * 1024,  # 30GB
-        }
-        model_config._attn_implementation = "flash_attention_2"
-        if model_arch == "llama":
-            from myTransformer.models.llama.modeling_llama_fa import CustomLlamaForCausalLM
-            model = CustomLlamaForCausalLM.from_pretrained(model_name_or_path,
-                                                           config=model_config)
-
-        elif model_arch == "qwen2":
-            from myTransformer.models.qwen2.modeling_qwen2_fa import CustomQwen2ForCausalLM
-            model = CustomQwen2ForCausalLM.from_pretrained(model_name_or_path,
-                                                           config=model_config)
-        else:
-            raise NotImplementedError(
-                f"{method} not implemented for {model_arch} models!")
-
-    elif method == "hash":
-        generate_config = {
-            "max_gpu_cache_memory":
-            float(os.environ["CUDA_MEM"]) * 1024 * 1024 * 1024,
-            "hash_rbits": int(os.environ["RBIT"]),
-            "hash_weights_path": os.environ["HASH_WEIGHTS_PATH"],
-            # "hash_weights_path": None,
-            "sparse_ratio": float(os.environ["TOPK_RATIO"]),
-            "use_norm": int(os.environ["USE_NORM"]) > 0,
-            "with_bias": False,
-            "num_sink": int(os.environ["NUM_SINK"]),
-            "num_recent": int(os.environ["NUM_RECENT"]),
-        }
-        model_config._attn_implementation = "flash_attention_2"
-        if model_arch == "llama":
-            from myTransformer.models.llama.modeling_llama_multi_hash import CustomLlamaForCausalLM
-            model = CustomLlamaForCausalLM.from_pretrained(model_name_or_path,
-                                                           config=model_config)
-
-        elif model_arch == "qwen2":
-            from myTransformer.models.qwen2.modeling_qwen2_multi_hash import CustomQwen2ForCausalLM
-            model = CustomQwen2ForCausalLM.from_pretrained(model_name_or_path,
-                                                           config=model_config)
-        else:
-            raise NotImplementedError(
-                f"{method} not implemented for {model_arch} models!")
-
-    else:
-        raise ValueError(f"Unsupported method: {method}")
-
-    # unset to avoid some warning
-    model.generation_config.temperature = None
-    model.generation_config.top_p = None
-    model.generation_config.pad_token_id = tokenizer.pad_token_id
-    model = model.to(dtype).eval()
-
-    for key, value in generate_config.items():
-        setattr(model.generation_config, key, value)
-
-    return model, tokenizer, generate_kwarg, apply_chat_template
 
 
 def comm_generate(x, generate_kwarg, model, tokenizer):
