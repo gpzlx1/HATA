@@ -11,6 +11,7 @@ find_package(CUDAToolkit REQUIRED)
 include(FindCUDA/select_compute_arch)
 CUDA_DETECT_INSTALLED_GPUS(INSTALLED_GPU_ARCH)
 set(TORCH_CUDA_ARCH_LIST "${INSTALLED_GPU_ARCH}")
+message("Detected CUDA architectures: ${TORCH_CUDA_ARCH_LIST}")
 
 # find torch
 file(TO_NATIVE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/scripts/find_torch.py FIND_TORCH_PY)

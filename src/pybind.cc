@@ -3,7 +3,6 @@
 #include <torch/script.h>
 #include <vector>
 
-#include "cpu-attn/cpu_attn.h"
 #include "cuda-attn/flash_api.h"
 #include "operator.h"
 
@@ -43,14 +42,10 @@ PYBIND11_MODULE(KVLib, m) {
         py::arg("seq_len"), py::arg("sink") = 0, py::arg("recent") = 0,
         py::arg("use_key_norm") = false)
       .def("batch_topk", &kvlib::TopkCUDA)
-      .def("decode_hash_encode", &kvlib::decode_hash_encode)
       .def("decode_multi_hash_encode", &kvlib::decode_multi_hash_encode)
       .def("flash_index_decode", &kvlib::mha_index_decode_fwd)
       .def("flash_decode", &kvlib::mha_decode_fwd)
-      .def("combine_attention", &kvlib::combine_attention)
       .def("kvcache_append", &kvlib::KVCacheAppend)
       .def("kvcache_append2", &kvlib::KVCacheAppend2)
-      .def("create_tensor", &create_tensor)
-      .def("cpu_attn", &kvlib::CPUAttention)
-      .def("cpu_sparse_attn", &kvlib::CPUSparseAttention);
+      .def("create_tensor", &create_tensor);
 }
