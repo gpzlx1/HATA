@@ -6,15 +6,23 @@ Large Language Models (LLMs) have emerged as a pivotal research area, yet the at
 
 ## Install
 
-* CUDA >= 12.4
+* CUDA == 12.4
 * Transfomers == 4.47.1
 * torch == 2.4.0
+* flashinfer == 0.2.0.post1
 
 ### Install Dependencies
 
 ```shell
 pip install -r requirements.txt
 pip install flashinfer -i https://flashinfer.ai/whl/cu121/torch2.4
+# for raft topk
+cd 3rdparty && bash download.sh
+# for 3rdparty/cutlass
+git submodule update --init
+# for flashattn
+pip install ninja cmake
+pip install flash-attn --no-build-isolation
 ```
 
 ### Install
@@ -64,7 +72,7 @@ Currently, the repo is still required to be refactored. It will be finished in 1
     publisher = "Association for Computational Linguistics",
     url = "https://aclanthology.org/2025.findings-acl.1275/",
     pages = "24856--24871",
-    ISBN = "979-8-89176-256-5"
+    ISBN = "979-8-89176-256-5",
 }
 ```
 
