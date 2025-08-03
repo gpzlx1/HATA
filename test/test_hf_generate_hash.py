@@ -52,7 +52,7 @@ if __name__ == "__main__":
 
     from myTransformer.models.llama.modeling_llama_hash import CustomLlamaForCausalLM
     from myTransformer.models.glm.modeling_glm_multi_hash_v2 import CustomGlmForCausalLM
-    from myTransformer.models.qwen2.modeling_qwen2_multi_hash import CustomQwen2ForCausalLM
+    from myTransformer.models.qwen2.modeling_qwen2_hash import CustomQwen2ForCausalLM
 
     config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
     config.torch_dtype = torch.float16
