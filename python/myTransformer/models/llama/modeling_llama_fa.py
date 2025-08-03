@@ -200,7 +200,7 @@ class CustomLlamaModel(LlamaModel):
             )
 
         # chunk prefill here
-        CHUNK_SIZE = 16384
+        CHUNK_SIZE = 4096
         for chunk_start in range(0, input_ids.shape[1], CHUNK_SIZE):
             chunk_input_ids = input_ids[:,
                                         chunk_start:chunk_start + CHUNK_SIZE]
