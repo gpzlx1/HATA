@@ -63,16 +63,21 @@ class HashStaticCache(CustomStaticCache):
         self.hash_dim = self.hash_rbits // 32
 
         per_token_per_head_kv_size = self.dtype.itemsize * self.head_dim * 2
-        per_token_per_head_hash_size = torch.int32.itemsize * self.hash_dim + self.dtype.itemsize
+        per_token_per_head_hash_size = torch.int32.itemsize * \
+            self.hash_dim + self.dtype.itemsize
 
         all_layer_per_token_per_head_kv_size = per_token_per_head_kv_size * self.num_layers
         all_layer_per_token_per_head_hash_size = per_token_per_head_hash_size * (
             self.num_layers - self.num_skip_layers)
-        all_layer_per_token_per_head_size = all_layer_per_token_per_head_kv_size + all_layer_per_token_per_head_hash_size
+        all_layer_per_token_per_head_size = all_layer_per_token_per_head_kv_size + \
+            all_layer_per_token_per_head_hash_size
 
-        self.max_kv_cache_size = self.max_gpu_cache_memory_size * all_layer_per_token_per_head_kv_size / all_layer_per_token_per_head_size
-        self.max_hash_cache_size = self.max_gpu_cache_memory_size * all_layer_per_token_per_head_hash_size / all_layer_per_token_per_head_size
-        self.max_norm_cache_size = self.max_hash_cache_size * self.dtype.itemsize / per_token_per_head_hash_size
+        self.max_kv_cache_size = self.max_gpu_cache_memory_size * \
+            all_layer_per_token_per_head_kv_size / all_layer_per_token_per_head_size
+        self.max_hash_cache_size = self.max_gpu_cache_memory_size * \
+            all_layer_per_token_per_head_hash_size / all_layer_per_token_per_head_size
+        self.max_norm_cache_size = self.max_hash_cache_size * \
+            self.dtype.itemsize / per_token_per_head_hash_size
         self.max_hash_cache_size -= self.max_norm_cache_size
 
         self.each_layer_max_kv_cache = self.max_kv_cache_size / self.num_layers
@@ -155,8 +160,10 @@ class HashStaticCache(CustomStaticCache):
 
         # print("max_seq_len", self.max_seq_len)
 
-        numel = 2 * batch_size * self.max_seq_len * self.num_key_value_heads * self.head_dim
-        hash_numel = batch_size * self.max_seq_len * self.num_key_value_heads * self.hash_dim
+        numel = 2 * batch_size * self.max_seq_len * \
+            self.num_key_value_heads * self.head_dim
+        hash_numel = batch_size * self.max_seq_len * \
+            self.num_key_value_heads * self.hash_dim
         norm_numel = batch_size * self.max_seq_len * self.num_key_value_heads
 
         for i in range(self.num_layers):
@@ -247,7 +254,7 @@ class HashStaticCache(CustomStaticCache):
     def compute_topk(self, encoded_query: torch.Tensor, seq_len: int,
                      layer_idx: int):
         assert layer_idx >= self.num_skip_layers, f"hash topk is not enabled in layer{layer_idx}!"
-        torch.cuda.nvtx.range_push("hash score")
+
         score = KVLib.hamming_score(self.layer_hash_caches[layer_idx],
                                     encoded_query,
                                     self.layer_norm_caches[layer_idx],
@@ -257,9 +264,7 @@ class HashStaticCache(CustomStaticCache):
                                     recent=self.num_recent,
                                     use_key_norm=self.use_norm)
         largest = True if self.use_norm else False
-        torch.cuda.nvtx.range_pop()
 
-        torch.cuda.nvtx.range_push("compute topk")
         if self.sparse_ratio < 1:
             fetch_num = int(seq_len * self.sparse_ratio)
         else:
@@ -267,8 +272,6 @@ class HashStaticCache(CustomStaticCache):
         # topk_indices = torch.topk(score, fetch_num, dim=-1,
         #                           largest=largest).indices.int()
         topk_indices = KVLib.batch_topk(score, fetch_num, largest)
-
-        torch.cuda.nvtx.range_pop()
 
         return topk_indices
 

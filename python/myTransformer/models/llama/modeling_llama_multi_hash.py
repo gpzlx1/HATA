@@ -13,9 +13,7 @@ from typing import Optional, Tuple, Union
 from transformers.modeling_outputs import BaseModelOutputWithPast
 
 from ...cache.kvcache_hash_all_on_gpu_multi import HashStaticCache, prepare_cache_for_generation
-from ..utils import SiLUAndMul
-import flashinfer
-from transformers.modeling_flash_attention_utils import _flash_attention_forward
+from flash_attn import flash_attn_with_kvcache
 import KVLib
 import math
 
@@ -45,7 +43,6 @@ class CustomLlamaAttention(LlamaFlashAttention2):
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor],
                Optional[Tuple[torch.Tensor]]]:
 
-        torch.cuda.nvtx.range_push("qkv_proj")
         batch_size = past_key_value.curr_batch_size
         q_len = past_key_value.get_cur_q_len()
         _, hidden_size = hidden_states.size()
@@ -61,12 +58,8 @@ class CustomLlamaAttention(LlamaFlashAttention2):
 
         value_states = self.v_proj(hidden_states)
 
-        torch.cuda.nvtx.range_pop()
-
-        torch.cuda.nvtx.range_push("rope")
         query_states, key_states = self.rotary_emb(query_states, key_states,
                                                    past_key_value)
-        torch.cuda.nvtx.range_pop()
 
         query_states = query_states.view(batch_size, -1, self.num_heads,
                                          self.head_dim)
@@ -83,18 +76,25 @@ class CustomLlamaAttention(LlamaFlashAttention2):
             if self.layer_idx >= past_key_value.get_num_skip_layers():
                 past_key_value.prefill_encode_hash(self.layer_idx, key_states)
 
-            attn_output = _flash_attention_forward(
+            attn_output = flash_attn_with_kvcache(
                 query_states,
                 key_states,
                 value_states,
-                attention_mask,
-                q_len,
-                position_ids=position_ids,
-                dropout=0,
-                sliding_window=getattr(self, "sliding_window", None),
-                use_top_left_mask=self._flash_attn_uses_top_left_mask,
-                is_causal=self.is_causal,
+                causal=True,
             )
+
+            # attn_output = _flash_attention_forward(
+            #     query_states,
+            #     key_states,
+            #     value_states,
+            #     attention_mask,
+            #     q_len,
+            #     position_ids=position_ids,
+            #     dropout=0,
+            #     sliding_window=getattr(self, "sliding_window", None),
+            #     use_top_left_mask=self._flash_attn_uses_top_left_mask,
+            #     is_causal=self.is_causal,
+            # )
         else:
             past_key_value.append_decode(key_states, value_states,
                                          self.layer_idx)
@@ -102,33 +102,25 @@ class CustomLlamaAttention(LlamaFlashAttention2):
                 self.layer_idx)
 
             if self.layer_idx >= past_key_value.get_num_skip_layers():
-                torch.cuda.nvtx.range_push("hash encode")
+
                 encoded_query = past_key_value.decode_encode_hash(
                     query_states, self.layer_idx)
-                torch.cuda.nvtx.range_pop()
 
-                torch.cuda.nvtx.range_push("hash select")
                 topk_indices = past_key_value.compute_topk(
                     encoded_query, kvcache_len, self.layer_idx)
-                torch.cuda.nvtx.range_pop()
 
-                torch.cuda.nvtx.range_push("sparse attention")
                 attn_output, _ = KVLib.flash_index_decode(
                     query_states, key_states, value_states, topk_indices,
                     self.sacle)
-                torch.cuda.nvtx.range_pop()
 
             else:
-                torch.cuda.nvtx.range_push("full attention")
+
                 attn_output, _ = KVLib.flash_decode(query_states, key_states,
                                                     value_states, self.sacle,
                                                     kvcache_len)
-                torch.cuda.nvtx.range_pop()
 
-        torch.cuda.nvtx.range_push("output proj")
         attn_output = attn_output.view(-1, hidden_size)
         attn_output = self.o_proj(attn_output)
-        torch.cuda.nvtx.range_pop()
 
         return attn_output, None, past_key_value
 
@@ -164,9 +156,8 @@ class CustomLlamaDecoderLayer(LlamaDecoderLayer):
             torch.cuda.set_device(hidden_states.device)
 
         residual = hidden_states
-        torch.cuda.nvtx.range_push("layer norm")
+
         hidden_states = self.input_layernorm(hidden_states)
-        torch.cuda.nvtx.range_pop()
 
         # Self Attention
         hidden_states, self_attn_weights, present_key_value = self.self_attn(
@@ -183,12 +174,11 @@ class CustomLlamaDecoderLayer(LlamaDecoderLayer):
         hidden_states = residual + hidden_states
 
         # Fully Connected
-        torch.cuda.nvtx.range_push("ffn")
+
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states = self.mlp(hidden_states)
         hidden_states = residual + hidden_states
-        torch.cuda.nvtx.range_pop()
 
         outputs = (hidden_states, )
 
@@ -227,12 +217,11 @@ class CustomLlamaModel(LlamaModel):
         cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
 
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (output_hidden_states
-                                if output_hidden_states is not None else
-                                self.config.output_hidden_states)
-        use_cache = use_cache if use_cache is not None else self.config.use_cache
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        assert inputs_embeds is None, "inputs_embeds is not supported in CustomLlamaModel"
+        output_attentions = False
+        # output_hidden_states = False
+        use_cache = True
+        # return_dict = True
 
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError(
@@ -240,53 +229,36 @@ class CustomLlamaModel(LlamaModel):
             )
 
         if self.gradient_checkpointing and self.training and use_cache:
-            logger.warning_once(
+            raise ValueError(
                 "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`."
             )
-            use_cache = False
 
-        if inputs_embeds is None:
-            inputs_embeds = self.embed_tokens(input_ids)
-
-        if cache_position is None:
-            past_seen_tokens = past_key_values.get_seq_length(
-            ) if past_key_values is not None else 0
-            cache_position = torch.arange(past_seen_tokens,
-                                          past_seen_tokens +
-                                          inputs_embeds.shape[1],
-                                          device=inputs_embeds.device)
-        if position_ids is None:
-            position_ids = cache_position.unsqueeze(0)
-
-        causal_mask = self._update_causal_mask(attention_mask, inputs_embeds,
-                                               cache_position, past_key_values,
-                                               output_attentions)
+        inputs_embeds = self.embed_tokens(input_ids)
         hidden_states = inputs_embeds
-        bsz, seq_len, _ = hidden_states.shape
+        bsz, q_len, _ = hidden_states.shape
 
         # all the layers share the same allocation plan
-        past_key_values.alloc(seq_len)
+        past_key_values.alloc(q_len)
 
         # decoder layers
-        all_hidden_states = () if output_hidden_states else None
-        all_self_attns = () if output_attentions else None
+        all_hidden_states = None
+        all_self_attns = None
         next_decoder_cache = None
 
         kwargs = {}
 
-        hidden_states = hidden_states.view(bsz * seq_len, -1)
+        hidden_states = hidden_states.view(bsz * q_len, -1)
+
         for decoder_layer in self.layers:
-            if output_hidden_states:
-                all_hidden_states += (hidden_states, )
 
             layer_outputs = decoder_layer(
                 hidden_states,
-                attention_mask=causal_mask,
-                position_ids=position_ids,
+                attention_mask=None,
+                position_ids=None,
                 past_key_value=past_key_values,
                 output_attentions=output_attentions,
                 use_cache=use_cache,
-                cache_position=cache_position,
+                cache_position=None,
                 position_embeddings=None,
                 **kwargs,
             )
@@ -297,23 +269,14 @@ class CustomLlamaModel(LlamaModel):
                 next_decoder_cache = layer_outputs[
                     2 if output_attentions else 1]
 
-            if output_attentions:
-                all_self_attns += (layer_outputs[1], )
-
+        # get last hidden state
+        hidden_states = hidden_states.view(
+            bsz, q_len, -1)[:, -1, :].view(bsz, -1)
         hidden_states = self.norm(hidden_states)
-        hidden_states = hidden_states.view(bsz, seq_len, -1)
+        hidden_states = hidden_states.view(bsz, 1, -1)
 
-        # add hidden states from the last decoder layer
-        if output_hidden_states:
-            all_hidden_states += (hidden_states, )
+        next_cache = next_decoder_cache
 
-        next_cache = next_decoder_cache if use_cache else None
-
-        if not return_dict:
-            return tuple(
-                v for v in
-                [hidden_states, next_cache, all_hidden_states, all_self_attns]
-                if v is not None)
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=next_cache,
