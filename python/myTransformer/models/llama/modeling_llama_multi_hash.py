@@ -82,19 +82,6 @@ class CustomLlamaAttention(LlamaFlashAttention2):
                 value_states,
                 causal=True,
             )
-
-            # attn_output = _flash_attention_forward(
-            #     query_states,
-            #     key_states,
-            #     value_states,
-            #     attention_mask,
-            #     q_len,
-            #     position_ids=position_ids,
-            #     dropout=0,
-            #     sliding_window=getattr(self, "sliding_window", None),
-            #     use_top_left_mask=self._flash_attn_uses_top_left_mask,
-            #     is_causal=self.is_causal,
-            # )
         else:
             past_key_value.append_decode(key_states, value_states,
                                          self.layer_idx)
