@@ -283,8 +283,6 @@ def _prefill_multi_hash_encode(
     packbit_tensor_ptr,
     output_code_output_ptr,
     output_code_stride0,
-    output_norm_output_ptr,
-    output_norm_stride0,
     seq_start,
     SEQ,
     BSZ,
@@ -304,8 +302,6 @@ def _prefill_multi_hash_encode(
     DataPtr = data_ptr + batch_id * data_stride0 + head_id * HEAD_DIM
     OutputCodePtr = output_code_output_ptr + batch_id * \
         output_code_stride0 + head_id * NUM_CHUNK + seq_start * NUM_HEAD * NUM_CHUNK
-    OutputNormPtr = output_norm_output_ptr + \
-        batch_id * output_norm_stride0 + head_id * 1 + seq_start * NUM_HEAD
     HashWeightPtr = head_id * (HEAD_DIM * RBIT)
 
     Data_block_ptr = tl.make_block_ptr(
@@ -324,14 +320,6 @@ def _prefill_multi_hash_encode(
         block_shape=(BLOCK_M, 1),
         order=(1, 0),
     )
-    OutputNorm_block_ptr = tl.make_block_ptr(
-        base=OutputNormPtr,
-        shape=(SEQ, 1),
-        strides=(NUM_HEAD * 1, 1),
-        offsets=(start_m * BLOCK_M, 0),
-        block_shape=(BLOCK_M, 1),
-        order=(1, 0),
-    )
     HashWeights_ptr = tl.make_block_ptr(
         base=hash_weights_ptr + HashWeightPtr,
         shape=(HEAD_DIM, RBIT),
@@ -345,12 +333,6 @@ def _prefill_multi_hash_encode(
     data = tl.load(Data_block_ptr,
                    boundary_check=(1, 0),
                    padding_option="zero")  # [BLOCK_M, HEAD_DIM]
-
-    # norm
-    data_accum = tl.cast(data, tl.float32)
-    norm = tl.sum(data_accum * data_accum, axis=1).reshape(BLOCK_M, 1)
-    norm = tl.cast(tl.sqrt(norm), tl.float16)
-    tl.store(OutputNorm_block_ptr, norm, boundary_check=(1, 0))
 
     # load pack tensor
     packbit_tensor = tl.load(packbit_tensor_ptr + tl.arange(0, CHUNK_SIZE))
@@ -371,13 +353,11 @@ def _prefill_multi_hash_encode(
 
 def prefill_multi_hash_encode(data: torch.Tensor, hash_weights: torch.Tensor,
                               data_code_output: torch.Tensor,
-                              data_norm_output: torch.Tensor,
                               packbit_aux_tensor: torch.Tensor, seq_start: int) -> None:
     """
     data: [bsz, seq, num_head, head_dim]
     hash_weights: [head_dim, rbit]
     data_code_output: [bsz, xx, num_head, num_chunk] (xx > seq)
-    data_norm_output: [bsz, xx, num_head] (xx > seq)
     packbit_aux_tensor: [32]
     """
 
@@ -407,8 +387,6 @@ def prefill_multi_hash_encode(data: torch.Tensor, hash_weights: torch.Tensor,
             packbit_aux_tensor,
             data_code_output,
             data_code_output.stride(0),
-            data_norm_output,
-            data_norm_output.stride(0),
             seq_start,
             SEQ,
             BSZ,
@@ -616,8 +594,6 @@ def _decode_multi_hash_encode(
     packbit_tensor_ptr,
     key_code_output_ptr,
     key_code_output_stride0,
-    key_norm_output_ptr,
-    key_norm_output_stride0,
     query_code_output_ptr,
     query_code_output_stride0,
     CUR_SEQ,
@@ -710,26 +686,10 @@ def _decode_multi_hash_encode(
             order=(1, 0),
         )
 
-        K_norm_block_ptr = tl.make_block_ptr(
-            base=key_norm_output_ptr + batch_id * key_norm_output_stride0 +
-            CUR_SEQ * KV_HEAD + head_id * 1,
-            shape=(1, 1),
-            strides=(KV_HEAD * 1, 1),
-            offsets=(start_m * BLOCK_M, 0),
-            block_shape=(BLOCK_M, 1),
-            order=(1, 0),
-        )
-
         # load Q, K
         k_data = tl.load(K_data_block_ptr,
                          boundary_check=(1, 0),
                          padding_option="zero")  # [BLOCK_M, HEAD_DIM]
-
-        # norm
-        if start_n == 0:
-            norm = tl.sum(k_data * k_data, axis=1).reshape(BLOCK_M, 1)
-            norm = tl.cast(tl.sqrt(tl.cast(norm, tl.float32)), tl.float16)
-            tl.store(K_norm_block_ptr, norm, boundary_check=(1, 0))
 
         k_acc = tl.dot(k_data, weight) > 0  # [BLOCK_M, BLOCK_N]
         k_acc = k_acc.to(packbit_tensor.type.element_ty)
@@ -740,7 +700,7 @@ def _decode_multi_hash_encode(
 
 def decode_multi_hash_encode(
         key_data: torch.Tensor, hash_weights: torch.Tensor,
-        key_code_output: torch.Tensor, key_norm_output: torch.Tensor,
+        key_code_output: torch.Tensor, 
         query_data: torch.Tensor, query_code_output: torch.Tensor,
         packbit_aux_tensor: torch.Tensor, cur_seq: int):
 
@@ -779,8 +739,6 @@ def decode_multi_hash_encode(
             packbit_aux_tensor,
             key_code_output,
             key_code_output.stride(0),
-            key_norm_output,
-            key_norm_output.stride(0),
             query_code_output,
             query_code_output.stride(0),
             cur_seq,

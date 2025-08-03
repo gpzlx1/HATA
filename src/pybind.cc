@@ -38,9 +38,8 @@ torch::Tensor create_tensor(std::vector<int32_t> size, int dtype) {
 
 PYBIND11_MODULE(KVLib, m) {
   m.def("hamming_score", &kvlib::HammingScoreCUDA, py::arg("key_code"),
-        py::arg("query_code"), py::arg("key_norm"), py::arg("rbit"),
-        py::arg("seq_len"), py::arg("sink") = 0, py::arg("recent") = 0,
-        py::arg("use_key_norm") = false)
+        py::arg("query_code"), py::arg("rbit"), py::arg("seq_len"),
+        py::arg("sink") = 0, py::arg("recent") = 0)
       .def("batch_topk", &kvlib::TopkCUDA)
       .def("decode_multi_hash_encode", &kvlib::decode_multi_hash_encode)
       .def("flash_index_decode", &kvlib::mha_index_decode_fwd)

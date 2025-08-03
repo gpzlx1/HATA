@@ -22,7 +22,6 @@ class HashStaticCache(CustomStaticCache):
         sparse_ratio: float = 0.1,
         num_skip_layers: int = 2,
         hash_weights_path: str = None,
-        use_norm: bool = False,
         num_sink: int = 0,
         num_recent: int = 0,
         max_batch_size: int = 16,
@@ -33,7 +32,6 @@ class HashStaticCache(CustomStaticCache):
         self.sparse_ratio = sparse_ratio
         self.hash_weights_path = hash_weights_path
         self.num_skip_layers = num_skip_layers
-        self.use_norm = use_norm
 
         self.num_sink = num_sink
         self.num_recent = num_recent
@@ -54,9 +52,6 @@ class HashStaticCache(CustomStaticCache):
         self.layer_hash_caches = []
         self.max_layer_hash_caches = []
 
-        self.layer_norm_caches = []
-        self.max_layer_norm_caches = []
-
         self.hash_weights = []
 
         assert self.hash_rbits % 32 == 0
@@ -76,22 +71,15 @@ class HashStaticCache(CustomStaticCache):
             all_layer_per_token_per_head_kv_size / all_layer_per_token_per_head_size
         self.max_hash_cache_size = self.max_gpu_cache_memory_size * \
             all_layer_per_token_per_head_hash_size / all_layer_per_token_per_head_size
-        self.max_norm_cache_size = self.max_hash_cache_size * \
-            self.dtype.itemsize / per_token_per_head_hash_size
-        self.max_hash_cache_size -= self.max_norm_cache_size
 
         self.each_layer_max_kv_cache = self.max_kv_cache_size / self.num_layers
         self.each_layer_max_hash_cache = self.max_hash_cache_size / (
             self.num_layers - self.num_skip_layers)
-        self.each_layer_max_norm_cache = self.max_norm_cache_size / (
-            self.num_layers - self.num_skip_layers)
-
+        
         kv_numel = int(self.each_layer_max_kv_cache / self.dtype.itemsize)
         self.each_layer_max_kv_numel = kv_numel
         hash_numel = int(self.each_layer_max_hash_cache / torch.int32.itemsize)
         self.each_layer_max_hash_numel = hash_numel
-        norm_numel = int(self.each_layer_max_norm_cache / self.dtype.itemsize)
-        self.each_layer_max_norm_numel = norm_numel
 
         for l in range(self.num_layers):
             layer_device = self.layer_devices[l]
@@ -99,7 +87,6 @@ class HashStaticCache(CustomStaticCache):
 
             self.layer_caches.append(None)
             self.layer_hash_caches.append(None)
-            self.layer_norm_caches.append(None)
 
             self.max_layer_caches.append(
                 torch.zeros((kv_numel, ),
@@ -110,10 +97,6 @@ class HashStaticCache(CustomStaticCache):
                 self.max_layer_hash_caches.append(
                     torch.zeros((hash_numel, ),
                                 dtype=torch.int32,
-                                device=layer_device))
-                self.max_layer_norm_caches.append(
-                    torch.zeros((norm_numel, ),
-                                dtype=self.dtype,
                                 device=layer_device))
                 if self.hash_weights_path is None:
                     hash_weight = torch.randn((self.num_key_value_heads,
@@ -128,7 +111,6 @@ class HashStaticCache(CustomStaticCache):
                 self.hash_weights.append(hash_weight)
             else:
                 self.max_layer_hash_caches.append(None)
-                self.max_layer_norm_caches.append(None)
                 self.hash_weights.append(None)
 
         self.max_seq_len = 0
@@ -153,10 +135,7 @@ class HashStaticCache(CustomStaticCache):
             2)
         hash_max_seq_len = self.each_layer_max_hash_numel // (
             self.num_key_value_heads * self.hash_dim * self.curr_batch_size)
-        norm_max_seq_len = self.each_layer_max_norm_numel // (
-            self.num_key_value_heads * self.curr_batch_size)
-        self.max_seq_len = min(kv_max_seq_len, hash_max_seq_len,
-                               norm_max_seq_len)
+        self.max_seq_len = min(kv_max_seq_len, hash_max_seq_len)
 
         # print("max_seq_len", self.max_seq_len)
 
@@ -164,7 +143,6 @@ class HashStaticCache(CustomStaticCache):
             self.num_key_value_heads * self.head_dim
         hash_numel = batch_size * self.max_seq_len * \
             self.num_key_value_heads * self.hash_dim
-        norm_numel = batch_size * self.max_seq_len * self.num_key_value_heads
 
         for i in range(self.num_layers):
             self.layer_caches[i] = self.max_layer_caches[i][:numel]
@@ -178,11 +156,6 @@ class HashStaticCache(CustomStaticCache):
                 self.layer_hash_caches[i] = self.layer_hash_caches[i].view(
                     batch_size, self.max_seq_len, self.num_key_value_heads,
                     self.hash_dim)
-
-                self.layer_norm_caches[i] = self.max_layer_norm_caches[
-                    i][:norm_numel]
-                self.layer_norm_caches[i] = self.layer_norm_caches[i].view(
-                    batch_size, self.max_seq_len, self.num_key_value_heads)
 
         self.query_code_buffers = {}
         for device in self.unique_devices:
@@ -235,7 +208,6 @@ class HashStaticCache(CustomStaticCache):
         prefill_multi_hash_encode(
             key, self.hash_weights[layer_idx],
             self.layer_hash_caches[layer_idx],
-            self.layer_norm_caches[layer_idx],
             self.hash_packbit_aux_tensors[self.layer_devices[layer_idx]], seq_start)
 
     def decode_encode_hash(self, key, query, layer_idx):
@@ -244,12 +216,11 @@ class HashStaticCache(CustomStaticCache):
         seq_start = self.layer_cache_lens[layer_idx] - 1
 
         # print("debugs")
-        KVLib.decode_multi_hash_encode(
-            # decode_multi_hash_encode(
+        #  KVLib.decode_multi_hash_encode(
+        decode_multi_hash_encode(
             key,
             self.hash_weights[layer_idx],
             self.layer_hash_caches[layer_idx],
-            self.layer_norm_caches[layer_idx],
             query,
             self.query_code_buffers[self.layer_devices[layer_idx]],
             self.hash_packbit_aux_tensors[self.layer_devices[layer_idx]],
@@ -263,13 +234,11 @@ class HashStaticCache(CustomStaticCache):
 
         score = KVLib.hamming_score(self.layer_hash_caches[layer_idx],
                                     encoded_query,
-                                    self.layer_norm_caches[layer_idx],
                                     self.hash_rbits,
                                     seq_len,
                                     sink=self.num_sink,
-                                    recent=self.num_recent,
-                                    use_key_norm=self.use_norm)
-        largest = True if self.use_norm else False
+                                    recent=self.num_recent)
+
 
         if self.sparse_ratio < 1:
             fetch_num = int(seq_len * self.sparse_ratio)
@@ -277,6 +246,7 @@ class HashStaticCache(CustomStaticCache):
             fetch_num = min(int(self.sparse_ratio), seq_len)
         # topk_indices = torch.topk(score, fetch_num, dim=-1,
         #                           largest=largest).indices.int()
+        largest=False
         topk_indices = KVLib.batch_topk(score, fetch_num, largest)
 
         return topk_indices
@@ -339,7 +309,6 @@ def prepare_cache_for_generation(
             layer_device_map=layer_device_map,
             sparse_ratio=generation_config.sparse_ratio,
             hash_weights_path=generation_config.hash_weights_path,
-            use_norm=generation_config.use_norm,
             num_sink=generation_config.num_sink,
             num_recent=generation_config.num_recent,
         )

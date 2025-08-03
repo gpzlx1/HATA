@@ -9,22 +9,34 @@
   do {                                        \
     if ((val) == 32) {                        \
       constexpr int NumHead = 32;             \
-      { __VA_ARGS__ }                         \
+      {                                       \
+        __VA_ARGS__                           \
+      }                                       \
     } else if ((val) == 40) {                 \
       constexpr int NumHead = 40;             \
-      { __VA_ARGS__ }                         \
+      {                                       \
+        __VA_ARGS__                           \
+      }                                       \
     } else if ((val) == 28) {                 \
       constexpr int NumHead = 28;             \
-      { __VA_ARGS__ }                         \
-    } else if ((val) == 8) {                 \
-      constexpr int NumHead = 8;             \
-      { __VA_ARGS__ }                         \
-    } else if ((val) == 4) {                 \
-      constexpr int NumHead = 4;             \
-      { __VA_ARGS__ }                         \
-    } else if ((val) == 2) {                 \
-      constexpr int NumHead = 2;             \
-      { __VA_ARGS__ }                         \
+      {                                       \
+        __VA_ARGS__                           \
+      }                                       \
+    } else if ((val) == 8) {                  \
+      constexpr int NumHead = 8;              \
+      {                                       \
+        __VA_ARGS__                           \
+      }                                       \
+    } else if ((val) == 4) {                  \
+      constexpr int NumHead = 4;              \
+      {                                       \
+        __VA_ARGS__                           \
+      }                                       \
+    } else if ((val) == 2) {                  \
+      constexpr int NumHead = 2;              \
+      {                                       \
+        __VA_ARGS__                           \
+      }                                       \
     } else {                                  \
       LOG(FATAL) << "NumHead is not support"; \
     }                                         \
@@ -61,19 +73,29 @@
   do {                                         \
     if ((val) == 8) {                          \
       constexpr int NumChunk = 8;              \
-      { __VA_ARGS__ }                          \
+      {                                        \
+        __VA_ARGS__                            \
+      }                                        \
     } else if ((val) == 4) {                   \
       constexpr int NumChunk = 4;              \
-      { __VA_ARGS__ }                          \
+      {                                        \
+        __VA_ARGS__                            \
+      }                                        \
     } else if ((val) == 3) {                   \
       constexpr int NumChunk = 3;              \
-      { __VA_ARGS__ }                          \
+      {                                        \
+        __VA_ARGS__                            \
+      }                                        \
     } else if ((val) == 2) {                   \
       constexpr int NumChunk = 2;              \
-      { __VA_ARGS__ }                          \
+      {                                        \
+        __VA_ARGS__                            \
+      }                                        \
     } else if ((val) == 1) {                   \
       constexpr int NumChunk = 1;              \
-      { __VA_ARGS__ }                          \
+      {                                        \
+        __VA_ARGS__                            \
+      }                                        \
     } else {                                   \
       LOG(FATAL) << "NumChunk is not support"; \
     }                                          \
@@ -86,11 +108,8 @@ template <typename T, bool USE_INT64, int32_t NumThreads, int32_t ELEMS,
 __global__ void HammingScoreKernel(void* __restrict__ keys_ptr,
                                    void* __restrict__ query_ptr,
                                    half* __restrict__ output_ptr, int32_t BSZ,
-                                   int32_t SEQ, half* __restrict__ key_norms,
-                                   int32_t batch_key_code_stride,
-                                   int32_t batch_key_norms_stride,
-                                   bool USE_KEY_NORM, int32_t SINK,
-                                   int32_t RECENT) {
+                                   int32_t SEQ, int32_t batch_key_code_stride,
+                                   int32_t SINK, int32_t RECENT) {
   assert(NumThreads == blockDim.x);
   constexpr int32_t BLOCK_M = (ELEMS / NumChunk / NumKVHead);
   constexpr int32_t ELEMS_IN_TOKEN = NumChunk * NumKVHead;
@@ -110,7 +129,6 @@ __global__ void HammingScoreKernel(void* __restrict__ keys_ptr,
   extern __shared__ int32_t smem[];
   int32_t* smem_popc = smem;
   T* smem_query_code = (T*)(smem_popc + NumThreads);
-  half* smem_key_norm = (half*)(smem_query_code + NumHead * NumChunk);
 
   T* q_ptr = (T*)query_ptr + batch_id * 1 * NumHead * NumChunk;
 // load q to smem
@@ -119,16 +137,6 @@ __global__ void HammingScoreKernel(void* __restrict__ keys_ptr,
     smem_query_code[i] = q_ptr[i];
   }
 
-  if (USE_KEY_NORM) {
-    half* key_norm_ptr = (half*)key_norms + batch_id * batch_key_norms_stride +
-                         block_start_m * NumKVHead;
-
-#pragma unroll
-    for (int i = (NumThreads - 1 - tid); i < left_m * NumKVHead;
-         i += NumThreads) {
-      smem_key_norm[i] = key_norm_ptr[i];
-    }
-  }
   __syncthreads();
 
   int32_t score = 0;
@@ -172,26 +180,18 @@ __global__ void HammingScoreKernel(void* __restrict__ keys_ptr,
         sum +=
             (half)(smem_popc[(m_id * NumKVHead + kv_head_id) * NumChunk + h]);
       }
-      if (USE_KEY_NORM) {
-        sum = half(KVGroup) - half(2.) * sum / RBIT;
-        sum = sum * smem_key_norm[m_id * NumKVHead + kv_head_id];
-        *_o_ptr = is_sink_or_recent ? half(65504) : sum;
-      } else {
-        *_o_ptr = is_sink_or_recent ? half(0.) : sum;
-      }
+
+      *_o_ptr = is_sink_or_recent ? half(0.) : sum;
     }
   }
 }
 
 torch::Tensor HammingScoreCUDA(torch::Tensor& key_codes,
-                               torch::Tensor& query_code,
-                               torch::Tensor& key_norms, int32_t rbit,
-                               int32_t seq_len, int32_t sink, int32_t recent,
-                               bool use_key_norm) {
+                               torch::Tensor& query_code, int32_t rbit,
+                               int32_t seq_len, int32_t sink, int32_t recent) {
   // shape for key_codes is (BATCH_SIZE, SEQ, #NUM_K_HEAD, num_chunk) and dtype
   // is int32 shape for query_code is (BATCH_SIZE, 1, #NUM_HEAD, num_chunk) and
-  // dtype is int32 shape for key_norms is (BATCH_SIZE, XXX, #NUM_K_HEAD), dtype
-  // is float16
+  // dtype is int32
 
   // shape for output is (BATCH_SIZE, #NUM_KV_HEAD, SEQ) [transpose head and seq
   // here] and dtype is float16
@@ -202,7 +202,6 @@ torch::Tensor HammingScoreCUDA(torch::Tensor& key_codes,
 
   int32_t num_head = query_code.size(2);
 
-  int32_t batch_key_norm_stride = key_norms.stride(0);
   int32_t batch_key_code_stride = key_codes.stride(0);
 
   int32_t kv_group = num_head / num_kv_head;
@@ -228,8 +227,6 @@ torch::Tensor HammingScoreCUDA(torch::Tensor& key_codes,
           constexpr int32_t ELEMS_PER_BLOCK =
               NumKVHead * HalfNumChunk * NumTokens;
 
-          shm_size += NumTokens * NumKVHead * sizeof(half);  // for key norm
-
           dim3 blks(NumThreads);
           dim3 grids(
               (seq_len * NumKVHead * HalfNumChunk + ELEMS_PER_BLOCK - 1) /
@@ -241,15 +238,11 @@ torch::Tensor HammingScoreCUDA(torch::Tensor& key_codes,
               <<<grids, blks, shm_size, stream>>>(
                   key_codes.data_ptr(), query_code.data_ptr(),
                   (half*)(output.data_ptr<at::Half>()), bsz, seq_len,
-                  (half*)(key_norms.data_ptr<at::Half>()),
-                  (batch_key_code_stride / 2), batch_key_norm_stride,
-                  use_key_norm, sink, recent);
+                  (batch_key_code_stride / 2), sink, recent);
 
         } else {
           constexpr int32_t NumTokens = NumThreads / (NumKVHead * NumChunk);
           constexpr int32_t ELEMS_PER_BLOCK = NumKVHead * NumChunk * NumTokens;
-
-          shm_size += NumTokens * NumKVHead * sizeof(half);  // for key norm
 
           dim3 blks(NumThreads);
           dim3 grids((seq_len * NumKVHead * NumChunk + ELEMS_PER_BLOCK - 1) /
@@ -261,9 +254,7 @@ torch::Tensor HammingScoreCUDA(torch::Tensor& key_codes,
               <<<grids, blks, shm_size, stream>>>(
                   key_codes.data_ptr(), query_code.data_ptr(),
                   (half*)(output.data_ptr<at::Half>()), bsz, seq_len,
-                  (half*)(key_norms.data_ptr<at::Half>()),
-                  batch_key_code_stride, batch_key_norm_stride, use_key_norm,
-                  sink, recent);
+                  batch_key_code_stride, sink, recent);
         }
       });
     });

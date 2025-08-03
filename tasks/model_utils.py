@@ -95,7 +95,6 @@ def load_config_and_tokenizer(args, task_config, model_name_or_path):
             "hash_rbits": int(task_config.get('hata', 'RBIT')),
             "hash_weights_path": task_config.get('hata', 'HASH_WEIGHTS_PATH'),
             "sparse_ratio": float(task_config.get('dataset', 'TOPK_RATIO')),
-            "use_norm": int(task_config.get('hata', 'USE_NORM')) > 0,
             "with_bias": False,
             "num_sink": int(task_config.get('hata', 'NUM_SINK')),
             "num_recent": int(task_config.get('hata', 'NUM_RECENT')),
