@@ -73,8 +73,6 @@ class CustomLlamaAttention(LlamaFlashAttention2):
 
         query_states = query_states.view(batch_size, -1, self.num_heads,
                                          self.head_dim)
-        if query_states.shape[0] > 1:
-            print(query_states.shape, key_states.shape, value_states.shape)
 
         attn_output = flash_attn_with_kvcache(
             query_states,
