@@ -116,7 +116,7 @@ def hash_encode(
 
         extra_kern_args = {}
 
-        grid = lambda args: (
+        def grid(args): return (
             triton.cdiv(TOTAL_HEAD, args["BLOCK_M"]),
             1,
             1,
@@ -251,7 +251,7 @@ def prefill_hash_encode(data: torch.Tensor, hash_weights: torch.Tensor,
 
         BLOCK_M = 128
 
-        grid = lambda args: (
+        def grid(args): return (
             triton.cdiv(TOTAL_LEN, BLOCK_M),
             BSZ,
             1,
@@ -285,6 +285,7 @@ def _prefill_multi_hash_encode(
     output_code_stride0,
     output_norm_output_ptr,
     output_norm_stride0,
+    seq_start,
     SEQ,
     BSZ,
     NUM_HEAD: tl.constexpr,
@@ -301,8 +302,10 @@ def _prefill_multi_hash_encode(
     head_id = tl.program_id(2)
 
     DataPtr = data_ptr + batch_id * data_stride0 + head_id * HEAD_DIM
-    OutputCodePtr = output_code_output_ptr + batch_id * output_code_stride0 + head_id * NUM_CHUNK
-    OutputNormPtr = output_norm_output_ptr + batch_id * output_norm_stride0 + head_id * 1
+    OutputCodePtr = output_code_output_ptr + batch_id * \
+        output_code_stride0 + head_id * NUM_CHUNK + seq_start * NUM_HEAD * NUM_CHUNK
+    OutputNormPtr = output_norm_output_ptr + \
+        batch_id * output_norm_stride0 + head_id * 1 + seq_start * NUM_HEAD
     HashWeightPtr = head_id * (HEAD_DIM * RBIT)
 
     Data_block_ptr = tl.make_block_ptr(
@@ -369,7 +372,7 @@ def _prefill_multi_hash_encode(
 def prefill_multi_hash_encode(data: torch.Tensor, hash_weights: torch.Tensor,
                               data_code_output: torch.Tensor,
                               data_norm_output: torch.Tensor,
-                              packbit_aux_tensor: torch.Tensor) -> None:
+                              packbit_aux_tensor: torch.Tensor, seq_start: int) -> None:
     """
     data: [bsz, seq, num_head, head_dim]
     hash_weights: [head_dim, rbit]
@@ -392,7 +395,7 @@ def prefill_multi_hash_encode(data: torch.Tensor, hash_weights: torch.Tensor,
 
         BLOCK_M = 128
 
-        grid = lambda args: (
+        def grid(args): return (
             triton.cdiv(SEQ, BLOCK_M),
             BSZ,
             NUM_HEAD,
@@ -406,6 +409,7 @@ def prefill_multi_hash_encode(data: torch.Tensor, hash_weights: torch.Tensor,
             data_code_output.stride(0),
             data_norm_output,
             data_norm_output.stride(0),
+            seq_start,
             SEQ,
             BSZ,
             NUM_HEAD,
@@ -568,7 +572,7 @@ def decode_hash_encode(key_data: torch.Tensor, hash_weights: torch.Tensor,
 
         BLOCK_M = 16
 
-        grid = lambda args: (
+        def grid(args): return (
             triton.cdiv(MAX_TOTAL_HEAD, BLOCK_M) + triton.cdiv(
                 MIN_TOTAL_HEAD, BLOCK_M),
             BSZ,
@@ -600,6 +604,8 @@ def decode_hash_encode(key_data: torch.Tensor, hash_weights: torch.Tensor,
         )
 
 # @triton.autotune(configs=configs, key=["HEAD_DIM", "RBIT"])
+
+
 @triton.jit
 def _decode_multi_hash_encode(
     key_data_ptr,
@@ -758,7 +764,7 @@ def decode_multi_hash_encode(
 
         BLOCK_M = 16
 
-        grid = lambda args: (
+        def grid(args): return (
             triton.cdiv(KV_GROUP * SEQ, BLOCK_M) + triton.cdiv(SEQ, BLOCK_M),
             BSZ * NUM_KV_HEAD,
             NUM_CHUNK,

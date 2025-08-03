@@ -195,16 +195,22 @@ class HashStaticCache(CustomStaticCache):
 
     def append_prefill(self, key_states: torch.Tensor,
                        value_states: torch.Tensor, layer_idx: int):
-        prefill_len = key_states.shape[1]
-
+        q_len = key_states.shape[1]
+        seq_start = self.layer_cache_lens[layer_idx]
 
         # middle
-        self.layer_caches[layer_idx][0, :, :prefill_len, :, :] = key_states
-        self.layer_caches[layer_idx][1, :, :prefill_len, :, :] = value_states
+        self.layer_caches[layer_idx][0, :,
+                                     seq_start:seq_start+q_len, :, :] = key_states
+        self.layer_caches[layer_idx][1, :,
+                                     seq_start:seq_start+q_len, :, :] = value_states
 
-        self.layer_cache_lens[layer_idx] += prefill_len
+        self.layer_cache_lens[layer_idx] += q_len
         if layer_idx == self.num_layers - 1:
-            self.seq_len += prefill_len
+            self.seq_len += q_len
+
+        key = self.layer_caches[layer_idx][0]
+        value = self.layer_caches[layer_idx][1]
+        return key, value, self.layer_cache_lens[layer_idx]
 
     def append_decode(self, key_states: torch.Tensor,
                       value_states: torch.Tensor, layer_idx: int):
@@ -216,22 +222,27 @@ class HashStaticCache(CustomStaticCache):
         if layer_idx == self.num_layers - 1:
             self.seq_len += 1
 
+        key = self.layer_caches[layer_idx][0]
+        value = self.layer_caches[layer_idx][1]
+        return key, value, self.layer_cache_lens[layer_idx]
+
     def prefill_encode_hash(self, layer_idx, key):
         assert layer_idx >= self.num_skip_layers, f"hash topk is not enabled in layer{layer_idx}!"
         # key = self.layer_caches[layer_idx][
         #     0, :, :self.layer_cache_lens[layer_idx], :, :]
+        seq_start = self.layer_cache_lens[layer_idx] - key.shape[1]
+
         prefill_multi_hash_encode(
             key, self.hash_weights[layer_idx],
             self.layer_hash_caches[layer_idx],
             self.layer_norm_caches[layer_idx],
-            self.hash_packbit_aux_tensors[self.layer_devices[layer_idx]])
+            self.hash_packbit_aux_tensors[self.layer_devices[layer_idx]], seq_start)
 
-    def decode_encode_hash(self, query, layer_idx):
+    def decode_encode_hash(self, key, query, layer_idx):
         assert layer_idx >= self.num_skip_layers, f"hash topk is not enabled in layer{layer_idx}!"
 
         seq_start = self.layer_cache_lens[layer_idx] - 1
-        key = self.layer_caches[layer_idx][0, :,
-                                           seq_start:seq_start + 1, :, :]
+
         # print("debugs")
         KVLib.decode_multi_hash_encode(
             # decode_multi_hash_encode(
@@ -245,11 +256,6 @@ class HashStaticCache(CustomStaticCache):
             seq_start)
 
         return self.query_code_buffers[self.layer_devices[layer_idx]]
-
-    def get_kvcache(self, layer_idx):
-        key = self.layer_caches[layer_idx][0]
-        value = self.layer_caches[layer_idx][1]
-        return key, value, self.layer_cache_lens[layer_idx]
 
     def compute_topk(self, encoded_query: torch.Tensor, seq_len: int,
                      layer_idx: int):

@@ -70,41 +70,44 @@ class CustomLlamaAttention(LlamaFlashAttention2):
                                          self.head_dim)
 
         if is_prefill:
-            past_key_value.append_prefill(key_states, value_states,
-                                          self.layer_idx)
+            cached_keys, cache_values, kvcache_len = past_key_value.append_prefill(key_states, value_states,
+                                                                                   self.layer_idx)
 
             if self.layer_idx >= past_key_value.get_num_skip_layers():
+                # must after append_prefill
                 past_key_value.prefill_encode_hash(self.layer_idx, key_states)
 
             attn_output = flash_attn_with_kvcache(
                 query_states,
-                key_states,
-                value_states,
+                cached_keys,
+                cache_values,
                 causal=True,
+                cache_seqlens=kvcache_len,
             )
         else:
-            past_key_value.append_decode(key_states, value_states,
-                                         self.layer_idx)
-            key_states, value_states, kvcache_len = past_key_value.get_kvcache(
-                self.layer_idx)
+            cached_keys, cache_values, kvcache_len = past_key_value.append_decode(key_states, value_states,
+                                                                                  self.layer_idx)
 
             if self.layer_idx >= past_key_value.get_num_skip_layers():
-
-                encoded_query = past_key_value.decode_encode_hash(
-                    query_states, self.layer_idx)
+                # must after append_decode
+                encoded_query = past_key_value.decode_encode_hash(key_states,
+                                                                  query_states, self.layer_idx)
 
                 topk_indices = past_key_value.compute_topk(
                     encoded_query, kvcache_len, self.layer_idx)
 
                 attn_output, _ = KVLib.flash_index_decode(
-                    query_states, key_states, value_states, topk_indices,
+                    query_states, cached_keys, cache_values, topk_indices,
                     self.sacle)
 
             else:
-
-                attn_output, _ = KVLib.flash_decode(query_states, key_states,
-                                                    value_states, self.sacle,
-                                                    kvcache_len)
+                attn_output = flash_attn_with_kvcache(
+                    query_states,
+                    cached_keys,
+                    cache_values,
+                    causal=True,
+                    cache_seqlens=kvcache_len,
+                )
 
         attn_output = attn_output.view(-1, hidden_size)
         attn_output = self.o_proj(attn_output)
@@ -220,41 +223,49 @@ class CustomLlamaModel(LlamaModel):
                 "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`."
             )
 
-        inputs_embeds = self.embed_tokens(input_ids)
-        hidden_states = inputs_embeds
-        bsz, q_len, _ = hidden_states.shape
+        # chunk prefill here
+        CHUNK_SIZE = 1024
+        for chunk_start in range(0, input_ids.shape[1], CHUNK_SIZE):
+            chunk_input_ids = input_ids[:,
+                                        chunk_start:chunk_start + CHUNK_SIZE]
 
-        # all the layers share the same allocation plan
-        past_key_values.alloc(q_len)
+            chunk_inputs_embeds = self.embed_tokens(chunk_input_ids)
+            hidden_states = chunk_inputs_embeds
+            bsz, q_len, _ = hidden_states.shape
 
-        # decoder layers
-        all_hidden_states = None
-        all_self_attns = None
-        next_decoder_cache = None
+            # all the layers share the same allocation plan
+            past_key_values.alloc(q_len)
 
-        kwargs = {}
+            # print(q_len, past_key_values.rope_metadata)
 
-        hidden_states = hidden_states.view(bsz * q_len, -1)
+            # decoder layers
+            all_hidden_states = None
+            all_self_attns = None
+            next_decoder_cache = None
 
-        for decoder_layer in self.layers:
+            kwargs = {}
 
-            layer_outputs = decoder_layer(
-                hidden_states,
-                attention_mask=None,
-                position_ids=None,
-                past_key_value=past_key_values,
-                output_attentions=output_attentions,
-                use_cache=use_cache,
-                cache_position=None,
-                position_embeddings=None,
-                **kwargs,
-            )
+            hidden_states = hidden_states.view(bsz * q_len, -1)
 
-            hidden_states = layer_outputs[0]
+            for decoder_layer in self.layers:
 
-            if use_cache:
-                next_decoder_cache = layer_outputs[
-                    2 if output_attentions else 1]
+                layer_outputs = decoder_layer(
+                    hidden_states,
+                    attention_mask=None,
+                    position_ids=None,
+                    past_key_value=past_key_values,
+                    output_attentions=output_attentions,
+                    use_cache=use_cache,
+                    cache_position=None,
+                    position_embeddings=None,
+                    **kwargs,
+                )
+
+                hidden_states = layer_outputs[0]
+
+                if use_cache:
+                    next_decoder_cache = layer_outputs[
+                        2 if output_attentions else 1]
 
         # get last hidden state
         hidden_states = hidden_states.view(
