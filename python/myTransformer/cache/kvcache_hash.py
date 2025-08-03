@@ -2,7 +2,7 @@ from typing import Dict, Optional, Union, Any
 import torch
 from transformers.configuration_utils import PretrainedConfig
 from transformers.generation.configuration_utils import GenerationConfig
-from .kernels.triton_hash_encode import prefill_multi_hash_encode, decode_multi_hash_encode
+from ..kernels.triton_hash_encode import prefill_multi_hash_encode, decode_multi_hash_encode
 from .kvcache_fa import CustomStaticCache
 import KVLib
 import os
