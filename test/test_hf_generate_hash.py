@@ -50,7 +50,7 @@ if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained(model_path,
                                               trust_remote_code=True)
 
-    from myTransformer.models.llama.modeling_llama_multi_hash import CustomLlamaForCausalLM
+    from myTransformer.models.llama.modeling_llama_hash import CustomLlamaForCausalLM
     from myTransformer.models.glm.modeling_glm_multi_hash_v2 import CustomGlmForCausalLM
     from myTransformer.models.qwen2.modeling_qwen2_multi_hash import CustomQwen2ForCausalLM
 

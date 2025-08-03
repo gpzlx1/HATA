@@ -127,7 +127,7 @@ def load_model(model_meta, model_config, model_name_or_path):
 
     elif method == "hash":
         if model_arch == "llama":
-            from myTransformer.models.llama.modeling_llama_multi_hash import CustomLlamaForCausalLM
+            from myTransformer.models.llama.modeling_llama_hash import CustomLlamaForCausalLM
             model = CustomLlamaForCausalLM.from_pretrained(model_name_or_path,
                                                            config=model_config)
 
