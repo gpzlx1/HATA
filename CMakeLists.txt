@@ -3,7 +3,7 @@ project(KVLib LANGUAGES CUDA CXX C)
 
 # find python
 find_package(Python 3.6 COMPONENTS Interpreter Development REQUIRED)
-set(PYTHON_INTERP python)
+set(PYTHON_INTERP  /workspace/miniconda3/envs/hata/bin/python)
 message(STATUS "Using Python interpreter: ${PYTHON_INTERP}")
 
 # find CUDA

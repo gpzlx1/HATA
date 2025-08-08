@@ -155,6 +155,19 @@ struct Flash_fwd_params : public Qkv_params {
   int seqlen_gather;
   int seqlen_gather_rounded;
   int num_heads_gather;
+  
+
+  // for mix attn
+  void* __restrict__ k_head_mask;
+  void* __restrict__ k_head_index;
+  void* __restrict__ buffer_k;
+  void* __restrict__ buffer_v;
+  index_t buffer_k_batch_stride;
+  index_t buffer_v_batch_stride;
+  index_t buffer_k_row_stride;
+  index_t buffer_v_row_stride;
+  index_t buffer_k_head_stride;
+  index_t buffer_v_head_stride; 
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -163,6 +176,14 @@ template <typename T, int Headdim, bool Is_causal>
 void run_mha_gather_fwd_(Flash_fwd_params &params, cudaStream_t stream);
 template <typename T, int Headdim, bool Is_causal>
 void run_mha_gather_fwd_splitkv_dispatch(Flash_fwd_params &params,
+                                         cudaStream_t stream);
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+template <typename T, int Headdim, bool Is_causal>
+void run_mha_mixed_fwd_(Flash_fwd_params &params, cudaStream_t stream);
+template <typename T, int Headdim, bool Is_causal>
+void run_mha_mixed_fwd_splitkv_dispatch(Flash_fwd_params &params,
                                          cudaStream_t stream);
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

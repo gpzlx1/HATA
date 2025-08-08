@@ -43,6 +43,7 @@ PYBIND11_MODULE(KVLib, m) {
       .def("batch_topk", &kvlib::TopkCUDA)
       .def("decode_multi_hash_encode", &kvlib::decode_multi_hash_encode)
       .def("flash_index_decode", &kvlib::mha_index_decode_fwd)
+      .def("flash_mixed_decode", &kvlib::mha_mixed_decode_fwd)
       .def("flash_decode", &kvlib::mha_decode_fwd)
       .def("kvcache_append", &kvlib::KVCacheAppend)
       .def("kvcache_append2", &kvlib::KVCacheAppend2)

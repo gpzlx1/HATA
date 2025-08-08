@@ -248,6 +248,28 @@ void set_params_gather(Flash_fwd_params &params, const at::Tensor idx,
   params.seqlen_gather_rounded = seqlen_gather_rounded;
 }
 
+void set_params_mixed(Flash_fwd_params &params, const at::Tensor idx,
+                      const at::Tensor buffer_keys,
+                      const at::Tensor buffer_values,
+                      const at::Tensor k_head_mask,
+                      const at::Tensor k_head_index) {
+  params.gather_idx_ptr = idx.data_ptr();
+  params.gather_idx_batch_stride = idx.stride(0);
+  params.gather_idx_head_stride = idx.stride(1);
+
+  params.k_head_mask = k_head_mask.data_ptr();
+  params.k_head_index = k_head_index.data_ptr();
+  params.buffer_k = buffer_keys.data_ptr();
+  params.buffer_v = buffer_values.data_ptr();
+
+  params.buffer_k_batch_stride = buffer_keys.stride(0);
+  params.buffer_v_batch_stride = buffer_values.stride(0);
+  params.buffer_k_row_stride = buffer_keys.stride(1);
+  params.buffer_v_row_stride = buffer_values.stride(1);
+  params.buffer_k_head_stride = buffer_keys.stride(2);
+  params.buffer_v_head_stride = buffer_values.stride(2);
+}
+
 //////////////////////////////////////////////////////////////////////////////////
 
 void run_mha_gather_fwd(Flash_fwd_params &params, cudaStream_t stream,
@@ -372,6 +394,181 @@ std::vector<at::Tensor> mha_index_decode_fwd(
   if (seqlen_gather > 0) {
     auto stream = at::cuda::getCurrentCUDAStream().stream();
     run_mha_gather_fwd(params, stream);
+  } else {
+    out.zero_();
+  }
+
+  if (seqlenq_ngroups_swapped) {
+    out = out.transpose(1, 2).reshape(
+        {batch_size, 1, num_heads_k * seqlen_q, head_size});
+    q = q.transpose(1, 2).reshape(
+        {batch_size, 1, num_heads_k * seqlen_q, head_size});
+    softmax_lse = softmax_lse.reshape({batch_size, num_heads_k * seqlen_q, 1});
+  }
+  return {out, softmax_lse};
+}
+
+//////////////////////////////////////////////////////////////////////////////////
+
+void run_mha_mixed_fwd(Flash_fwd_params &params, cudaStream_t stream,
+                       bool force_split_kernel = false) {
+  if (params.num_splits <= 1 &&
+      !force_split_kernel) {  // If we don't set it num_splits == 0
+    run_mha_mixed_fwd_<cutlass::half_t, 128, false>(params, stream);
+  } else {
+    run_mha_mixed_fwd_splitkv_dispatch<cutlass::half_t, 128, false>(params,
+                                                                    stream);
+  }
+}
+
+std::vector<at::Tensor> mha_mixed_decode_fwd(
+    at::Tensor
+        &q,  // batch_size x seqlen_q x num_heads x round_multiple(head_size, 8)
+    const at::Tensor &cached_k,  // batch_size x (>real_k_seq) x (<num_heads_k>)
+                                 // x round_multiple(head_size, 8)
+    const at::Tensor &cached_v,  // batch_size x (>real_k_seq) x (<num_heads_k>)
+                                 // x round_multiple(head_size, 8)
+    const at::Tensor &gather_idx,  // batch_size x num_heads_k x seqlen_gather
+    const at::Tensor
+        &buffer_k,  // batch_size x (>real_k_seq) x (<num_heads_k>) x head_size
+    const at::Tensor
+        &buffer_v,  // batch_size x (>real_k_seq) x (<num_heads_k>) x head_size
+    const at::Tensor &k_head_mask,   // num_heads_k
+    const at::Tensor &k_head_index,  // num_heads_K
+    const int real_k_seq, const float softmax_scale) {
+  auto dprops = at::cuda::getCurrentDeviceProperties();
+  bool is_sm8x = dprops->major == 8 && dprops->minor >= 0;
+  bool is_sm90 = dprops->major == 9 && dprops->minor == 0;
+  TORCH_CHECK(is_sm90 || is_sm8x,
+              "FlashAttention only supports Ampere GPUs or newer.");
+
+  auto q_dtype = q.dtype();
+  TORCH_CHECK(q_dtype == torch::kFloat16 || q_dtype == torch::kBFloat16,
+              "FlashAttention only support fp16 and bf16 data type");
+  if (q_dtype == torch::kBFloat16) {
+    TORCH_CHECK(is_sm90 || is_sm8x,
+                "bfloat16 is only supported on Ampere GPUs or newer");
+  }
+  TORCH_CHECK(cached_k.dtype() == q_dtype,
+              "query and key must have the same dtype");
+  TORCH_CHECK(cached_v.dtype() == q_dtype,
+              "query and value must have the same dtype");
+  TORCH_CHECK(buffer_k.dtype() == q_dtype,
+              "query and key must have the same dtype");
+  TORCH_CHECK(buffer_v.dtype() == q_dtype,
+              "query and value must have the same dtype");
+
+  // int check for k_head_index and gather_idx
+  TORCH_CHECK(gather_idx.dtype() == torch::kInt32, "gather_idx must be int32");
+  TORCH_CHECK(k_head_index.dtype() == torch::kInt32,
+              "k_head_index must be int32");
+  TORCH_CHECK(k_head_mask.dtype() == torch::kBool, "k_head_mask must be bool");
+
+  CHECK_DEVICE(q);
+  CHECK_DEVICE(cached_k);
+  CHECK_DEVICE(cached_k);
+  CHECK_DEVICE(buffer_k);
+  CHECK_DEVICE(buffer_v);
+  CHECK_DEVICE(k_head_mask);
+  CHECK_DEVICE(k_head_index);
+
+  TORCH_CHECK(q.stride(-1) == 1,
+              "Input tensor must have contiguous last dimension");
+  TORCH_CHECK(cached_k.stride(-1) == 1,
+              "Input tensor must have contiguous last dimension");
+  TORCH_CHECK(cached_k.stride(-1) == 1,
+              "Input tensor must have contiguous last dimension");
+  TORCH_CHECK(buffer_k.stride(-1) == 1,
+              "Input tensor must have contiguous last dimension");
+  TORCH_CHECK(buffer_v.stride(-1) == 1,
+              "Input tensor must have contiguous last dimension");
+
+  const auto sizes = q.sizes();
+
+  const int batch_size = sizes[0];
+  int seqlen_q = sizes[1];
+  int num_heads = sizes[2];
+  const int head_size = sizes[3];
+  const int seqlen_k = real_k_seq;
+  // const int num_heads_k = cached_k.size(2);
+  const int num_heads_k = k_head_mask.size(0);
+
+  // const int num_heads_gather = gather_idx.size(1);
+  // const int seqlen_gather = gather_idx.size(2);
+
+  TORCH_CHECK(batch_size > 0, "batch size must be positive");
+  TORCH_CHECK(
+      head_size <= 256,
+      "FlashAttention forward only supports head dimension at most 256");
+  TORCH_CHECK(head_size % 8 == 0,
+              "query, key, value, and out_ must have a head_size that is a "
+              "multiple of 8");
+  TORCH_CHECK(
+      num_heads % num_heads_k == 0,
+      "Number of heads in key/value must divide number of heads in query");
+
+  TORCH_CHECK(num_heads_k == gather_idx.size(1));
+  TORCH_CHECK(num_heads_k == k_head_index.size(0));
+
+  TORCH_CHECK(seqlen_k == gather_idx.size(2));
+  TORCH_CHECK(seqlen_k <= buffer_k.size(1));
+
+  // Faster to transpose q from (b, 1, (nheads_kv ngroups), d) to (b, ngroups,
+  // nheads_kv, d) in this case H/t Daniel Haziza
+  const int seqlenq_ngroups_swapped =
+      seqlen_q == 1 && num_heads > num_heads_k && head_size % 8 == 0; // &&
+      // num_heads_gather == num_heads_k;
+      const int ngroups = num_heads / num_heads_k;
+  if (seqlenq_ngroups_swapped) {
+    q = q.reshape({batch_size, num_heads_k, ngroups, head_size})
+            .transpose(1, 2);
+    seqlen_q = ngroups;
+    num_heads = num_heads_k;
+  }
+
+  CHECK_SHAPE(q, batch_size, seqlen_q, num_heads, head_size);
+  // CHECK_SHAPE(cached_k, batch_size, seqlen_k, num_heads_k, head_size);
+  // CHECK_SHAPE(cached_v, batch_size, seqlen_k, num_heads_k, head_size);
+
+  at::Tensor out = torch::empty_like(q);
+
+  auto round_multiple = [](int x, int m) { return (x + m - 1) / m * m; };
+  const int head_size_rounded =
+      head_size <= 192 ? round_multiple(head_size, 32) : 256;
+  const int seqlen_q_rounded = round_multiple(seqlen_q, 128);
+  const int seqlen_k_rounded = round_multiple(seqlen_k, 128);
+  // const int seqlen_gather_rounded = round_multiple(seqlen_gather, 128);
+
+  // Otherwise the kernel will be launched from cuda:0 device
+  // Cast to char to avoid compiler warning about narrowing
+  at::cuda::CUDAGuard device_guard{(char)q.get_device()};
+
+  auto opts = q.options();
+
+  auto softmax_lse =
+      torch::empty({batch_size, num_heads, seqlen_q}, opts.dtype(at::kFloat));
+
+  Flash_fwd_params params;
+  set_params_fprop(params, batch_size, seqlen_q, seqlen_k, seqlen_q_rounded,
+                   seqlen_k_rounded, num_heads, num_heads_k, head_size,
+                   head_size_rounded, q, cached_k, cached_v, out, nullptr,
+                   nullptr, nullptr, nullptr, softmax_lse.data_ptr(), 0.0f,
+                   softmax_scale, -1, -1, 0.0f);
+
+  // set_params_gather(params, gather_idx, num_heads_gather,
+  // seqlen_gather_rounded);
+  set_params_mixed(params, gather_idx, buffer_k, buffer_v, k_head_mask,
+                   k_head_index);
+
+  // Keep references to these tensors to extend their lifetime
+  at::Tensor softmax_lse_accum, out_accum;
+  std::tie(softmax_lse_accum, out_accum) = set_params_splitkv(
+      params, batch_size, num_heads, head_size, seqlen_k, seqlen_q,
+      head_size_rounded, 0.0f, /*num_splits=*/0, dprops, opts);
+
+  if (seqlen_k > 0) {
+    auto stream = at::cuda::getCurrentCUDAStream().stream();
+    run_mha_mixed_fwd(params, stream);
   } else {
     out.zero_();
   }
