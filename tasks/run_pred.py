@@ -128,6 +128,8 @@ def run_one_pred_and_write(args, x, model, tokenizer, dataset_name, dataset_mana
         out_info.pop(key)
 
     outputs = comm_generate(x, generate_kwargs, model, tokenizer)
+    
+    print(f"outputs: {outputs}")
 
     if not warm_up:
         for i in range(num_obj):
@@ -204,7 +206,7 @@ def single_pref(args, task_config, dataset_manager, tasks):
                 continue
             run_one_pred_and_write(args,
                                    x, model, tokenizer, dataset_name, dataset_manager, generate_kwargs, warm_up)
-
+            exit()
 
 def pred_loop_func(args, task_config, rank, task_queue, dataset_manager):
     seed_everything(args.seed)
@@ -283,7 +285,7 @@ if __name__ == "__main__":
 
     # load task config
     task_config = configparser.ConfigParser()
-    out = task_config.read(args.config_file)
+    task_config.read(args.config_file)
 
     dataset_manager, tasks = GetManagerAndTasks(
         args.dataset_name, args.dataset_path, args.e)
@@ -298,9 +300,11 @@ if __name__ == "__main__":
     args.method = args.method.lower()
     model_meta, model_config, tokenizer, generate_kwarg, apply_chat_template = load_config_and_tokenizer(
         args, task_config, args.model_name_or_path)
+    model = load_model(model_meta, model_config, args.model_name_or_path)
+    model.generation_config.pad_token_id = tokenizer.pad_token_id
 
-    if hasattr(model_config, "eos_token_id"):
-        eos_token_id = model_config.eos_token_id
+    if hasattr(model, "generation_config"):
+        eos_token_id = model.generation_config.eos_token_id
     else:
         eos_token_id = tokenizer.eos_token_id
     if isinstance(eos_token_id, int):

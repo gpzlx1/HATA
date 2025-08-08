@@ -1,8 +1,6 @@
 import torch
-from transformers import LlamaForCausalLM, AutoTokenizer, AutoConfig
+from transformers import AutoTokenizer, AutoConfig
 import time
-import numpy as np
-import myTransformer
 import os
 from transformers.generation.configuration_utils import GenerationConfig
 
@@ -11,10 +9,10 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 def bench_prefill_decode_speed(model, tokenizer, prefill_len, batch_size):
 
-    warmup = 3
-    prefill_bench = 5
-    decode_bench = 5
-    decode_step = prefill_len // 10
+    warmup = 1
+    prefill_bench = 2
+    decode_bench = 0
+    decode_step = prefill_len // 100
     input_text = "A " * prefill_len
 
     generation_kwargs = {
@@ -57,6 +55,8 @@ def bench_prefill_decode_speed(model, tokenizer, prefill_len, batch_size):
                          prefill_time_begin) * 1000 / prefill_bench
     print(f"prefill time cost [{prompt.shape}]: {prefill_time_cost} ms")
 
+    exit()
+
     # warmup
     for i in range(warmup):
         model.generate(prompt,
@@ -87,8 +87,9 @@ if __name__ == "__main__":
     # model_path = "/nfs/shared_LLM_model/meta-llama/Llama-2-7b-chat-hf"
     # model_path = "/nfs/shared_LLM_model/lmsys/longchat-7b-v1.5-32k"
     # model_path = "/root/data/togethercomputer/LLaMA-2-7B-32K/"
-    model_path = "/root/data/meta-llama/Meta-Llama-3.1-8B-Instruct/"
+    # model_path = "/root/data/meta-llama/Meta-Llama-3.1-8B-Instruct/"
     # model_path = "/nfs/shared_LLM_model/meta-llama/Meta-Llama-3.1-8B-Instruct"
+    model_path = "/nfs/shared_LLM_model/Qwen/Qwen2.5-7B-Instruct-1M/"
     # model_path = "/nfs/shared_LLM_model/facebook/opt-13b"
     tokenizer = AutoTokenizer.from_pretrained(model_path)
 
@@ -97,8 +98,9 @@ if __name__ == "__main__":
     config.torch_dtype = torch.float16
 
     print(config)
-    from myTransformer.models.llama.modeling_llama_hash import CustomLlamaForCausalLM
-    model = CustomLlamaForCausalLM.from_pretrained(model_path,
+    # from myTransformer.models.llama.modeling_llama_hash import CustomLlamaForCausalLM
+    from myTransformer.models.qwen2.modeling_qwen2_fa import CustomQwen2ForCausalLM
+    model = CustomQwen2ForCausalLM.from_pretrained(model_path,
                                                    torch_dtype=torch.float16,
                                                    config=config)
     # model.generation_config.cache_implementation = "static"
@@ -106,5 +108,5 @@ if __name__ == "__main__":
 
     batch_size = 1
     print(f"batch_size: {batch_size}")
-    for prefill_len in [72000]:
+    for prefill_len in [38404]:
         bench_prefill_decode_speed(model, tokenizer, prefill_len, batch_size)
